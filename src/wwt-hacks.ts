@@ -160,6 +160,63 @@ export function drawSpreadSheetLayer(renderContext, opacity, flat) {
   return true;
 }
 
+// ── Milky Way texture fade + size override ────────────────────────────────────
+// WWT computes: opacity = clamp((log(zoom) - FADE_ZERO) / FADE_RANGE, 0, 1)
+// Stock values: FADE_ZERO = 17.9, FADE_RANGE = 2.3
+const MW_FADE_ZERO   = 18.6;  // ← raise to fade out sooner when zooming in
+const MW_FADE_RANGE  = 2.3;   // ← widen for a softer fade
+// MW_ANGLE_SCALE expands the ±64° lat/lng quad extents built by _createGalaxyImage.
+// The camera sits at the origin so world-matrix scaling has no angular effect;
+// we instead rebuild the GL vertex buffer with a larger angular footprint.
+const MW_ANGLE_SCALE = 1.05;  // ← increase to make the galaxy image larger
+
+let _galaxyVertexBufferPatched = false;
+
+function _patchGalaxyVertexBuffer(renderContext) {
+  if (!Grids._galaxyImageVertexBuffer) return;
+  const subdivs     = 50;
+  const scaleFactor = 60800000;
+  const ecliptic    = Coordinates.meanObliquityOfEcliptic(SpaceTimeController.get_jNow()) / 180 * Math.PI;
+  const step        = 1 / subdivs;
+  const data        = new Float32Array((subdivs + 1) * (subdivs + 1) * 5);
+  for (let y1 = 0; y1 <= subdivs; y1++) {
+    // Original WWT formula: latMin=64, latMax=-64, latDegrees=-128
+    // → lat runs from -64 at y1=0 to +64 at y1=50.  Mirror exactly, scaled.
+    const lat = (-64 + 128 * (y1 < subdivs ? y1 : subdivs) * step) * MW_ANGLE_SCALE;
+    for (let x1 = 0; x1 <= subdivs; x1++) {
+      const lng = (-64 + 128 * (x1 < subdivs ? x1 : subdivs) * step) * MW_ANGLE_SCALE;
+      const pt  = Vector3d.create(lng * scaleFactor, 0, (lat - 28) * scaleFactor);
+      pt.rotateY( 213           / 180 * Math.PI);
+      pt.rotateZ((-62.87175)    / 180 * Math.PI);
+      pt.rotateY((-192.8595083) / 180 * Math.PI);
+      pt.rotateX(ecliptic);
+      const vi = (y1 * (subdivs + 1) + x1) * 5;
+      data[vi]     = pt.x;
+      data[vi + 1] = pt.y;
+      data[vi + 2] = pt.z;
+      data[vi + 3] = 1 - x1 * step;  // u  (matches original)
+      data[vi + 4] = y1 * step;       // v  (matches original)
+    }
+  }
+  const gl = renderContext.gl;
+  gl.bindBuffer(gl.ARRAY_BUFFER, Grids._galaxyImageVertexBuffer.vertexBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, null);
+}
+
+const _origDrawGalaxyImage = Grids.drawGalaxyImage;
+export function drawGalaxyImage(renderContext, _opacity) {
+  const zoom    = renderContext.viewCamera.zoom;
+  const opacity = Math.min(1, Math.max(0, (Math.log(zoom) - MW_FADE_ZERO) / MW_FADE_RANGE));
+  if (opacity > 0) {
+    _origDrawGalaxyImage.call(this, renderContext, opacity);
+    if (!_galaxyVertexBufferPatched && Grids._galaxyImageVertexBuffer) {
+      _patchGalaxyVertexBuffer(renderContext);
+      _galaxyVertexBufferPatched = true;
+    }
+  }
+}
+
 export function layerManagerDraw(renderContext, opacity, astronomical, referenceFrame, nested, cosmos) {
   if (!(referenceFrame in LayerManager.get_allMaps())) {
     return;

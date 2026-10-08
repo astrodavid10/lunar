@@ -1,5 +1,4 @@
-**/dist/*
-!./dist/index.html
+/dist/
 
 node_modules/
 tsconfig.tsbuildinfo
@@ -15,11 +14,8 @@ tsconfig.tsbuildinfo
 
 .pnp.*
 .DS_Store
-
-.DS_Store
-*/.DS_Store
-*/*/.DS_Store
 .vscode/settings.json
+.claude/settings.local.json
 
 **/tests_output/**
 
