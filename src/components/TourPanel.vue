@@ -159,7 +159,7 @@ export default defineComponent({
     height: 3px;
     border-radius: 2px;
     background: rgba(255, 255, 255, 0.15);
-    &.done { background: rgba(242, 196, 109, 0.5); }
+    &.done { background: rgba(var(--accent-rgb), 0.5); }
     &.current { background: var(--accent); }
   }
 }
@@ -168,6 +168,12 @@ export default defineComponent({
   display: flex;
   justify-content: space-between;
   gap: 0.5rem;
+  // When the panel scrolls (short screens), Back/Next stay reachable.
+  position: sticky;
+  bottom: -0.9rem;
+  margin: 0 -1rem -0.9rem;
+  padding: 0.5rem 1rem 0.9rem;
+  background: var(--surface-strong);
 }
 
 @media (max-width: 640px) {

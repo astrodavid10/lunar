@@ -44,20 +44,22 @@
       </div>
 
       <footer class="intro-credits">
-        <p>
-          Maps: NASA Lunar Reconnaissance Orbiter (LROC, LOLA), JAXA SELENE/Kaguya, NASA/DoD Clementine,
-          USGS Astrogeology. Photos: NASA. Elevation data: LRO LOLA via NASA PDS.
+        <a class="intro-maker" href="https://www.rocketcenter.com/INTUITIVEPlanetarium" target="_blank" rel="noopener">
+          <img :src="ipUssrcLogo" alt="INTUITIVE Planetarium at the U.S. Space &amp; Rocket Center" class="maker-logo" />
+        </a>
+        <p class="intro-author">
+          <span class="credit-label">Created by:</span>
+          <a href="https://github.com/astrodavid10" target="_blank" rel="noopener">A. David Weigel</a>
         </p>
-        <div class="intro-logos">
-          <a href="https://worldwidetelescope.org" target="_blank" rel="noopener" aria-label="WorldWide Telescope">
-            <img :src="wwtLogo" alt="WorldWide Telescope" />
-          </a>
-          <a href="https://www.rocketcenter.com/INTUITIVEPlanetarium" target="_blank" rel="noopener"
-             aria-label="INTUITIVE Planetarium at the U.S. Space &amp; Rocket Center">
-            <img :src="ipLogo" alt="INTUITIVE Planetarium" class="logo-wide" />
-          </a>
-          <img :src="ipUssrcLogo" alt="INTUITIVE Planetarium at the U.S. Space &amp; Rocket Center" class="logo-wide logo-lockup" />
-        </div>
+        <p class="intro-data">
+          Maps: NASA Lunar Reconnaissance Orbiter (LROC, LOLA), JAXA SELENE/Kaguya, NASA/DoD Clementine,
+          USGS Astrogeology. Craters: Robbins (2019). Maria: LROC (Nelson et al. 2014). Photos: NASA.
+        </p>
+        <a class="intro-powered" href="https://worldwidetelescope.org" target="_blank" rel="noopener">
+          <span class="credit-label">Powered by</span>
+          <img :src="wwtLogo" alt="" aria-hidden="true" />
+          <span>WorldWide Telescope</span>
+        </a>
       </footer>
     </div>
   </div>
@@ -68,7 +70,6 @@ import { defineComponent } from "vue";
 import { trapTab } from "../a11y";
 import lmLogo from "../assets/LM-12_w.svg";
 import wwtLogo from "../assets/logo_wwt.png";
-import ipLogo from "../assets/ip-wordmark-white.svg";
 import ipUssrcLogo from "../assets/ip-ussrc.png";
 
 export default defineComponent({
@@ -76,7 +77,7 @@ export default defineComponent({
   emits: ["start", "tour"],
 
   data() {
-    return { lmLogo, wwtLogo, ipLogo, ipUssrcLogo };
+    return { lmLogo, wwtLogo, ipUssrcLogo };
   },
 
   mounted() {
@@ -119,7 +120,7 @@ export default defineComponent({
   border-radius: var(--radius-lg);
   background: var(--surface-strong);
   border: 1px solid var(--border);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(242, 196, 109, 0.08);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(var(--accent-rgb), 0.08);
   color: var(--text);
   outline: none;
 
@@ -220,34 +221,79 @@ export default defineComponent({
 
 .intro-credits {
   border-top: 1px solid var(--border);
-  padding-top: 0.8rem;
+  padding-top: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.7rem;
+  text-align: center;
 
-  p {
-    margin: 0 0 0.7rem;
-    font-size: 0.78rem;
-    line-height: 1.5;
+  .credit-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
     color: var(--text-muted);
   }
 }
 
-.intro-logos {
+.intro-maker {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   align-items: center;
-  gap: 0.9rem 1.2rem;
+  gap: 0.35rem;
+  color: inherit;
+  text-decoration: none;
+  border-radius: var(--radius-sm);
+  padding: 0.2rem 0.6rem;
 
-  img {
-    height: 30px;
-    width: auto;
+  .maker-logo {
     display: block;
+    width: min(15rem, 70vw);
+    height: auto;
   }
-  .logo-wide { height: 34px; }
-  .logo-lockup { height: 40px; }
+}
+
+.intro-author {
+  margin: -0.2rem 0 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: 0.95rem;
+
+  a {
+    color: var(--accent-strong);
+    font-weight: 700;
+    text-decoration: none;
+    &:hover { text-decoration: underline; }
+  }
+}
+
+.intro-data {
+  margin: 0;
+  max-width: 30rem;
+  font-size: 0.74rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.intro-powered {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+
+  img { width: 22px; height: 22px; display: block; }
+  &:hover span:last-child { text-decoration: underline; }
 }
 
 @media (max-width: 520px) {
   .intro-dialog { padding: 1.2rem 1.1rem 1rem; }
   .intro-tips .tip-icon { min-width: 2.2rem; }
   .intro-tips .tip-tabs { display: none; }
+  .intro-maker .maker-logo { width: min(12rem, 70vw); }
 }
 </style>

@@ -142,11 +142,14 @@ export default defineComponent({
 </script>
 
 <style lang="less">
+// Sized into the free space between the measured top chrome and bottom bar
+// (--top-reserve / --reserve-left are set by the viewer), so it never covers
+// the launchers, the dock or the map picker.
 .explore-panel {
   position: absolute;
   left: 0.75rem;
-  bottom: 5rem;
-  top: 6.5rem;
+  top: var(--top-reserve, 6.5rem);
+  bottom: calc(var(--reserve-left, 5rem) + 0.5rem);
   z-index: 30;
   width: min(23rem, calc(100vw - 1.5rem));
   display: flex;
@@ -297,8 +300,8 @@ export default defineComponent({
 
   &:hover { background: rgba(255, 255, 255, 0.08); }
   &.active {
-    background: rgba(242, 196, 109, 0.12);
-    border-color: rgba(242, 196, 109, 0.35);
+    background: rgba(var(--accent-rgb), 0.12);
+    border-color: rgba(var(--accent-rgb), 0.35);
     border-left-color: var(--card-color);
   }
 }
@@ -373,7 +376,7 @@ export default defineComponent({
   font: inherit;
   cursor: pointer;
 
-  &:hover { background: rgba(242, 196, 109, 0.1); border-color: rgba(242, 196, 109, 0.4); }
+  &:hover { background: rgba(var(--accent-rgb), 0.1); border-color: rgba(var(--accent-rgb), 0.4); }
 
   .tour-name { font-weight: 700; font-size: 1.05rem; }
   .tour-tagline { color: var(--text-muted); font-size: 0.9rem; }
@@ -382,9 +385,8 @@ export default defineComponent({
 
 @media (max-width: 640px) {
   .explore-panel {
-    top: auto;
-    bottom: 4.5rem;
-    max-height: 62vh;
+    right: 0.75rem;
+    width: auto;
   }
 }
 </style>

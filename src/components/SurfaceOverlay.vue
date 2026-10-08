@@ -34,37 +34,6 @@
       @pointercancel="listenCancel"
     ></div>
 
-    <!-- HUD: where am I, how big is this? -->
-    <div class="hud" v-if="hudVisible" aria-hidden="true">
-      <div class="hud-row hud-coords">
-        <span class="hud-tag">{{ hud.pointer ? "Cursor" : "Center" }}</span>
-        <span>{{ hud.coords }}</span>
-      </div>
-      <div class="hud-row" v-if="hud.elevation">
-        <span class="hud-tag">Height</span>
-        <span>{{ hud.elevation }}</span>
-      </div>
-      <div class="hud-row" v-if="hud.terrain">
-        <span class="hud-tag">Terrain</span>
-        <span>{{ hud.terrain }}</span>
-      </div>
-      <div class="hud-row" v-if="hud.crater">
-        <span class="hud-tag">Crater</span>
-        <span>{{ hud.crater }}</span>
-      </div>
-      <div class="hud-row" v-if="hud.density">
-        <span class="hud-tag">Craters</span>
-        <span>{{ hud.density }}</span>
-      </div>
-      <div class="hud-row hud-scale" v-if="hud.scaleKm">
-        <span class="scale-bar" :style="{ width: hud.scalePx + 'px' }"></span>
-        <span>{{ hud.scaleKm }}</span>
-      </div>
-      <div class="hud-row hud-side" :class="hud.farSide ? 'far' : 'near'">
-        <span class="side-dot"></span>
-        <span>{{ hud.farSide ? "Far side · never seen from Earth" : "Near side · faces Earth" }}</span>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -119,10 +88,9 @@ export default defineComponent({
     listenMode: { type: Boolean, default: false },
     profile: { type: Array as PropType<ProfileSample[] | null>, default: null },
     playhead: { type: Number, default: -1 },
-    hudVisible: { type: Boolean, default: true },
   },
 
-  emits: ["select", "hover", "listen-line"],
+  emits: ["select", "hover", "listen-line", "hud"],
 
   data() {
     return {
@@ -145,6 +113,7 @@ export default defineComponent({
         densityCount: 0,
         densityComplete: false,
         mariaCanvas: null as HTMLCanvasElement | null,
+        lastHud: "",
       }),
       hud: {
         pointer: false,
@@ -425,7 +394,7 @@ export default defineComponent({
       if (!og) { return; }
       og.setTransform(g.getTransform());
       og.clearRect(0, 0, p.width, p.height);
-      og.fillStyle = "#7692ff";
+      og.fillStyle = "#9680ff";
       const outline = new Path2D();
       for (const poly of polys) {
         if (!p.capMayBeVisible(poly.center, poly.radius)) { continue; }
@@ -463,7 +432,7 @@ export default defineComponent({
       g.globalAlpha = 0.24;
       g.drawImage(off, 0, 0);
       g.restore();
-      g.strokeStyle = "rgba(160, 182, 255, 0.85)";
+      g.strokeStyle = "rgba(186, 170, 255, 0.85)";
       g.lineWidth = 1.1;
       g.stroke(outline);
     },
@@ -586,7 +555,7 @@ export default defineComponent({
             pen = false;
           }
         }
-        g.strokeStyle = strong ? "rgba(242, 196, 109, 0.45)" : "rgba(242, 196, 109, 0.2)";
+        g.strokeStyle = strong ? "rgba(125, 207, 255, 0.5)" : "rgba(125, 207, 255, 0.22)";
         g.lineWidth = strong ? 1.1 : 0.8;
         g.stroke();
       };
@@ -622,7 +591,7 @@ export default defineComponent({
         g.lineWidth = 3;
         g.strokeStyle = `rgba(0, 0, 0, ${(0.65 * alpha).toFixed(3)})`;
         g.strokeText(text, pt.x, pt.y);
-        g.fillStyle = big ? `rgba(225, 220, 208, ${(0.85 * alpha).toFixed(3)})` : `rgba(255, 236, 196, ${alpha.toFixed(3)})`;
+        g.fillStyle = big ? `rgba(225, 220, 208, ${(0.85 * alpha).toFixed(3)})` : `rgba(214, 238, 255, ${alpha.toFixed(3)})`;
         g.fillText(text, pt.x, pt.y);
       }
     },
@@ -633,7 +602,7 @@ export default defineComponent({
         g.beginPath();
         g.moveTo(d.x0, d.y0);
         g.lineTo(d.x1, d.y1);
-        g.strokeStyle = "rgba(124, 198, 240, 0.9)";
+        g.strokeStyle = "rgba(125, 207, 255, 0.9)";
         g.setLineDash([6, 5]);
         g.lineWidth = 2;
         g.stroke();
@@ -652,7 +621,7 @@ export default defineComponent({
           pen = false;
         }
       }
-      g.strokeStyle = "rgba(124, 198, 240, 0.95)";
+      g.strokeStyle = "rgba(125, 207, 255, 0.95)";
       g.lineWidth = 2.5;
       g.stroke();
       if (this.playhead >= 0) {
@@ -664,7 +633,7 @@ export default defineComponent({
           g.fillStyle = "#ffffff";
           g.fill();
           g.lineWidth = 2;
-          g.strokeStyle = "rgba(124, 198, 240, 1)";
+          g.strokeStyle = "rgba(125, 207, 255, 1)";
           g.stroke();
         }
       }
@@ -733,6 +702,11 @@ export default defineComponent({
           const per1000 = (this.rt.densityCount / areaKm2) * 1000;
           this.hud.density = `${per1000 >= 10 ? Math.round(per1000) : per1000.toFixed(1)} over 1 km, per 1,000 km²`;
         }
+      }
+      const snapshot = JSON.stringify(this.hud);
+      if (snapshot !== this.rt.lastHud) {
+        this.rt.lastHud = snapshot;
+        this.$emit("hud", { ...this.hud });
       }
 
     },
@@ -879,62 +853,4 @@ export default defineComponent({
   touch-action: none;
 }
 
-.hud {
-  position: absolute;
-  right: 0.75rem;
-  bottom: 2.25rem;
-  padding: 0.5rem 0.7rem;
-  min-width: 13.5rem;
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  backdrop-filter: blur(6px);
-  color: var(--text);
-  font-size: 0.8rem;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.5;
-
-  .hud-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-  .hud-tag {
-    min-width: 3.4rem;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    font-size: 0.68rem;
-    letter-spacing: 0.08em;
-  }
-  .hud-scale {
-    margin-top: 0.15rem;
-  }
-  .scale-bar {
-    display: inline-block;
-    height: 6px;
-    border: 1.5px solid var(--text);
-    border-top: none;
-  }
-  .hud-side {
-    margin-top: 0.15rem;
-    color: var(--text-muted);
-    .side-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      border: 1.5px solid var(--text-muted);
-    }
-    &.near .side-dot { background: linear-gradient(90deg, var(--text) 50%, transparent 50%); }
-    &.far .side-dot { background: transparent; }
-  }
-}
-
-@media (max-width: 640px) {
-  .hud {
-    min-width: 0;
-    font-size: 0.72rem;
-    bottom: 2rem;
-    .hud-side span:last-child { display: none; }
-  }
-}
 </style>

@@ -85,12 +85,14 @@ export default defineComponent({
 <style lang="less">
 .site-detail {
   --card-color: var(--feature-color);
+  // Left of the tools column, between the measured top chrome and the
+  // bottom-right stack (vars set by the viewer).
   position: absolute;
-  right: 0.75rem;
-  top: 6.5rem;
+  right: calc(var(--tools-w, 4rem) + 0.5rem);
+  top: var(--top-reserve, 6.5rem);
   z-index: 25;
-  width: min(23rem, calc(100vw - 1.5rem));
-  max-height: calc(100% - 12rem);
+  width: min(23rem, calc(100vw - var(--tools-w, 4rem) - 1.25rem));
+  max-height: calc(100% - var(--top-reserve, 6.5rem) - var(--reserve-right, 6rem) - 0.75rem);
   overflow-y: auto;
   border-top: 3px solid var(--card-color);
 
@@ -168,8 +170,8 @@ export default defineComponent({
 .detail-look {
   padding: 0.6rem 0.75rem;
   border-radius: var(--radius-sm);
-  background: rgba(242, 196, 109, 0.08);
-  border: 1px solid rgba(242, 196, 109, 0.25);
+  background: rgba(var(--accent-rgb), 0.08);
+  border: 1px solid rgba(var(--accent-rgb), 0.25);
 
   p {
     margin: 0 0 0.5rem;
@@ -181,9 +183,12 @@ export default defineComponent({
 
 @media (max-width: 640px) {
   .site-detail {
+    left: 0.75rem;
+    right: 0.75rem;
+    width: auto;
     top: auto;
-    bottom: 4.5rem;
-    max-height: 55vh;
+    bottom: calc(var(--reserve-right, 6rem) + 0.5rem);
+    max-height: calc(100% - var(--top-reserve, 6.5rem) - var(--reserve-right, 6rem) - 1rem);
   }
 }
 </style>

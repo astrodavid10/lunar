@@ -5,75 +5,56 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm run serve      # local dev server
-npm run build      # Python preprocessing + webpack production build
-npm run lint       # ESLint (no autofix)
-npm run clean      # remove dist/
+yarn serve        # local dev server
+yarn build        # production build into dist/ (no source maps)
+yarn lint         # ESLint (no autofix)
+yarn typecheck    # vue-tsc --noEmit
+yarn clean        # remove dist/
 ```
 
-The build runs `python modify_index.py` before webpack. That script patches one line out of `node_modules/@wwtelescope/engine/src/index.js` (a zoom-clamp line that conflicts with the lunar viewer's zoom behavior). If the pattern is already absent the script exits silently, so it is always safe to run.
+Yarn 4 with the `node-modules` linker (`.yarnrc.yml`). CI (`.github/workflows/build.yml`) runs install → lint → typecheck → build on every push, and `deploy.yml` publishes `dist/` to GitHub Pages from `main`.
+
+After changing dependencies, check `yarn why vue` shows a single Vue version; two copies (one nested under `@wwtelescope/engine-pinia`) break both types and reactivity. `yarn dedupe` fixes it.
 
 ## Architecture
 
 ### What it does
-An interactive Moon exploration viewer rendered in WorldWide Telescope (WWT) planet mode. Users can switch between seven lunar imageset layers (CGI photorealistic, LRO WAC, SELENE Kaguya, LOLA elevation, ColorShade elevation, Clementine mineral, and the Unified Geologic Map), crossfade between any two, and fly to nine named sites (craters, rilles, Apollo landing sites).
+"Moon Maps": a Moon explorer in WorldWide Telescope planet mode. Seven global imagesets (true color, LRO WAC, Kaguya, LOLA elevation, ColorShade, Clementine minerals, USGS geology), a compare slider, 33 sites drawn on the surface, three guided tours, overlays (maria, 1.3 M craters, names and grid), Tonight's Moon (real terminator and phase), terrain sonification, and a kiosk mode.
 
-### Main component: `src/lunar-viewer.vue`
-
-The entire app lives here. It extends `MiniDSBase` from `@cosmicds/vue-toolkit`, which wraps the `@wwtelescope/engine-pinia` store and mixes all WWT actions and getters into the component instance. There is no Vuex; state flows through Pinia.
-
-**Initialization sequence** (`mounted` → `waitForReady()` → `initialize()`):
-1. Apply WWT settings (hide constellations, crosshairs, etc.; disable clock sync).
-2. `loadImageCollection()` with `https://web.wwtassets.org/kiosk/2022/moon/moon_maps_v4.wtml`.
-3. `WWTControl.getImageSets()` filtered by `referenceFrame === "Moon"` to collect the available imagesets.
-4. Order them by `LAYER_META` (module-level const) — this controls dot-button display order. Imagesets not in `LAYER_META` are appended at the end.
-5. `setupForImageset({ foreground, background })` with the default map — this is what switches WWT from sky mode into planet/Moon mode.
-6. `gotoRADecZoom()` to the full-disk view, then set `mapsLoaded` and `positionSet` to `true` (which clears `isLoading`).
-
-**Loading guard**: `isLoading` is `!(mapsLoaded && positionSet)`. All UI elements are hidden behind `v-show="!isLoading"` until both flags are set. If initialization throws (e.g., WTML fails), those flags never set and the UI stays hidden.
-
-### Map switching and crossfade
-
-`switchToMap(newIndex)` drives all map changes:
-- Stores the previous index in `prevMapIndex` for the "return" button and compare slider.
-- If the **manual compare slider is open**, it updates foreground only (leaving the user-controlled blend intact).
-- Otherwise it auto-crossfades: sets the new map as foreground at opacity 0, then a `setInterval` loop over 30 steps × 23 ms increments opacity to 100, then promotes foreground → background (`setBackgroundImageByName`) and calls `setForegroundOpacity(100)`.
-
-The **manual compare slider** (`toggleCrossfadeSlider`) sets the background to the previous (or adjacent) map and the foreground to the current map, then exposes an `<input type="range">` bound to `manualOpacity` that calls `setForegroundOpacity()` on input. Closing it restores both BG and FG to the current map.
-
-Key WWT methods used for this (all available via `MiniDSBase`):
-- `setBackgroundImageByName(name)` / `setForegroundImageByName(name)`
-- `setForegroundOpacity(0–100)`
-- `setupForImageset({ foreground: Imageset, background?: Imageset })`
-
-### Location navigation
-
-`LOCATIONS` (module-level array) holds `{ id, name, raRad, decRad, zoomDeg, description }`. In Moon/planet mode, `raRad`/`decRad` are lunar longitude/latitude in radians. `gotoLocation(loc)` calls `gotoRADecZoom()` with `instant: false` for the smooth fly-to, sets `selectedLocation` to show the description popup, and clears `enRoute` when the promise resolves.
-
-### Adding or updating content
-
-**New map layer**: Add an entry to `LAYER_META` (in `lunar-viewer.vue`) with the exact WWT imageset name as it appears in `moon_maps_v4.wtml`. The order in `LAYER_META` is the display order of the dot buttons. If the imageset has a color legend, put the image in `src/assets/` and reference it with `legendSrc`.
-
-**New location**: Add to the `LOCATIONS` array. Coordinates are in radians (Moon longitude/latitude). `zoomDeg` around 2–5 works well for craters; 160 = full disk.
-
-### Key files
-
+### Main pieces
 | File | Role |
 |------|------|
-| `src/lunar-viewer.vue` | Entire app: WWT Moon integration, map switching, crossfade, location nav, UI |
-| `src/main.ts` | App bootstrap — mounts LunarViewer, registers WWT pinia, Vuetify, FontAwesome |
-| `src/assets/common.less` | Global styles (layout, loading modal, fonts) |
-| `src/assets/lola-legend.png` | Legend overlay for the LOLA elevation layer |
-| `src/assets/colorshade-legend.png` | Legend overlay for the LROC ColorShade layer |
-| `modify_index.py` | Patches a zoom-clamp line out of the WWT engine bundle at build time |
-| `plugins/vuetify.ts` | Vuetify 3 instance (dark theme, MDI icons) |
+| `src/lunar-viewer.vue` | Orchestrator: boot, map switching and crossfade, compare, sites, tours, Tonight, Listen, kiosk, deep links, layout measurement |
+| `src/components/SurfaceOverlay.vue` | Canvas + HTML overlay on the WWT canvas: site markers, maria, craters, night shading, names/grid, listen line. Emits HUD readings (`@hud`) |
+| `src/components/{IntroDialog,ExplorePanel,SiteCard,TourPanel,LoadingMoon}.vue` | Splash, site gallery, site detail, tour player, loader |
+| `src/globe.ts` | Planet-mode projection: lat/lon ↔ screen, visibility, limb snapping |
+| `src/flight.ts` | Cinematic fly-to (custom engine mover: rise, pan, dive; smootherstep) |
+| `src/ephemeris.ts` | Subsolar point and phase (Meeus ch. 25/47/53) |
+| `src/elevation.ts`, `src/audio.ts` | LOLA height grid; Web Audio chimes and profile sonification |
+| `src/maria.ts`, `src/craters.ts` | Mare polygons; tiered crater tiles via HTTP Range |
+| `src/data/{layers,sites,tours,features}.ts` | All content: layer captions/credits, sites, tours, IAU labels |
+| `src/boot.ts`, `src/kiosk.ts`, `src/kioskStats.ts`, `src/urlParams.ts`, `src/KioskQrModal.vue` | Copied verbatim from the JWST app; keep them in sync with it rather than editing here |
+| `public/data/` | Generated data (see `tools/`) |
+| `tools/` | Scripts that regenerate `public/data` from the original PDS/LROC sources |
 
-**Note**: `src/exo-sonification.vue`, `src/wwt-hacks.ts`, `src/exoplanetData.ts`, and related audio/data files still exist in the repo but are no longer imported or active. `main.ts` mounts `LunarViewer`; the exoplanet component is dormant.
+The component extends `WWTAwareComponent` from `@wwtelescope/engine-pinia` (not `@cosmicds/vue-toolkit`). `wwt-namespace` must match between `main.ts` and the `<WorldWideTelescope>` element (`"wwt-lunar-viewer"`).
 
-### WWT + Vue 3 integration notes
+### WWT planet-mode conventions (verified against the engine)
+- Site coordinates are selenographic degrees, east-positive. `gotoRADecZoom` takes `raRad = −eastLon`; the camera's `lng` equals east longitude.
+- A surface point is `Coordinates.geoTo3d(lat, lon + 180)` on a unit sphere. The canvas is sized in CSS pixels, so projected points position HTML directly.
+- `WWTControl.addFrameCallback` (engine ≥ 7.36) runs after each render; the overlay redraws there, only when the camera or inputs change.
+- Engine zoom is a vertical FOV; `wholeMoon()` scales it on portrait screens.
 
-- The component must extend `MiniDSBase` (not use it as a plugin) for the WWT store actions to be available as `this.*` methods.
-- `wwt-namespace` passed to `<WorldWideTelescope>` and to `wwtPinia` (via `main.ts`) must match; currently `"wwt-lunar-viewer"`.
-- Font Awesome icons use the CDN CSS (`<link>` in the template), not the JS-bundled FA component — `<i class="fas fa-*">` syntax only.
-- `common.less` uses Vue 2 fade-transition class names (`.fade-enter`, `.fade-leave-to`). The component overrides these with the correct Vue 3 names (`.fade-enter-from`).
-- `--app-content-height` CSS variable must be set on the root element (done via `cssVars` computed returning `{ '--app-content-height': '100%' }`) because `common.less` uses it on `#main-content`.
+### Layout rules
+UI chrome is measured, not assumed. `measureLayout()` (ResizeObserver) publishes `--top-reserve`, `--reserve-left`, `--reserve-right` and `--tools-w` on `#main-content`; side panels size into that space. The bottom bar is one CSS grid (launchers | dock | HUD stack) that re-flows at 960 px, 640 px, and for short screens (≤ 500 px tall). Global `box-sizing: border-box` is required for the `max-height` caps to hold. When changing layout, re-run an overlap check at desktop, tablet, portrait and landscape phone sizes.
+
+### Theme
+Tokens live in `src/assets/common.less` (`--accent-rgb` drives every translucent accent). Program colors: Apollo gold, robotic mint, Artemis orchid, features bone; markers also differ by shape. Canvas colors in `SurfaceOverlay.vue` are literals and must be changed alongside the tokens.
+
+### Adding content
+- **Map layer**: add to `LAYER_META` in `src/data/layers.ts` with the exact imageset name from `moon_maps_v4.wtml`; legends are imported images.
+- **Site**: add to `SITES` in `src/data/sites.ts` (lat, east lon, zoom). Only use photo URLs verified against the NASA Image Library API.
+- **Tour stop**: add to `src/data/tours.ts`; each stop names a site and the layer to show.
+
+### Data credits
+Maps: NASA LRO (LROC, LOLA), JAXA SELENE/Kaguya, NASA/DoD Clementine, USGS. Craters: Robbins (2019) JGR Planets 124, doi:10.1029/2018JE005592. Maria: LROC, Nelson et al. (2014) LPSC 45, 2861. Elevation: LRO LOLA LDEM_4 via PDS.

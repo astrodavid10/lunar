@@ -1,5 +1,5 @@
 <template>
-  <div id="main-content" :class="{ 'kiosk-ui': kioskMode, attract: attractMode }">
+  <div id="main-content" ref="root" :class="{ 'kiosk-ui': kioskMode, attract: attractMode }" :style="layoutVars">
     <WorldWideTelescope :wwt-namespace="wwtNamespace"></WorldWideTelescope>
 
     <SurfaceOverlay
@@ -14,17 +14,17 @@
       :listen-mode="listenOpen"
       :profile="profile"
       :playhead="playhead"
-      :hud-visible="!isLoading && !attractMode && !(isNarrow && dockOpen)"
       @select="onMarkerSelect"
       @hover="onMarkerHover"
       @listen-line="onListenLine"
+      @hud="hud = $event"
     />
 
     <!-- Loading / boot error (audit L4, E3) -->
     <transition name="fade">
       <div class="modal" id="modal-loading" v-show="isLoading || bootError">
         <div class="loading-box" v-if="!bootError" role="status">
-          <div class="spinner" aria-hidden="true"></div>
+          <LoadingMoon />
           <p>Loading the Moon…</p>
         </div>
         <div class="boot-error" v-else role="alert">
@@ -38,8 +38,8 @@
 
     <template v-if="!isLoading">
       <!-- Title chip (L6): persistent name of the app + current map -->
-      <button type="button" class="title-chip" @click="openIntro" aria-label="About Moon Maps">
-        <img :src="lmLogo" alt="" aria-hidden="true" />
+      <button ref="titleChip" type="button" class="title-chip" @click="openIntro" aria-label="About Moon Maps">
+        <img :src="ipEmblem" alt="" aria-hidden="true" />
         <span class="title-text">
           <span class="title-name">Moon Maps</span>
           <span class="title-map">{{ currentLayer?.displayName ?? shortName(currentMapName) }}</span>
@@ -47,7 +47,7 @@
       </button>
 
       <!-- Layer tabs (L13, L15): named, ≥ 24 px targets -->
-      <nav class="layer-bar" aria-label="Moon maps">
+      <nav ref="layerBar" class="layer-bar" aria-label="Moon maps">
         <button type="button" class="icon-btn layer-step" aria-label="Previous map" @click="moveLeft">
           <FontAwesomeIcon icon="chevron-left" />
         </button>
@@ -69,18 +69,18 @@
           <FontAwesomeIcon icon="chevron-right" />
         </button>
       </nav>
-      <p class="layer-caption" aria-live="polite">
+      <p ref="caption" class="layer-caption" aria-live="polite" :class="{ covered: isNarrow && overlaysOpen }">
         <span v-if="!compareOpen">{{ currentLayer?.caption }}</span>
         <span v-else-if="comparePromptText">{{ comparePromptText }}</span>
         <span v-else>Drag the slider to blend {{ compareLayer?.tabLabel }} and {{ currentLayer?.tabLabel }}.</span>
       </p>
 
       <!-- Right-side tools (L15: real buttons with names) -->
-      <div class="tools" role="toolbar" aria-label="Map tools" aria-orientation="vertical">
-        <button type="button" class="icon-btn" aria-label="Zoom in" title="Zoom in" @click="zoomBy(1 / 1.5)">
+      <div ref="tools" class="tools" role="toolbar" aria-label="Map tools">
+        <button type="button" class="icon-btn zoom-btn" aria-label="Zoom in" title="Zoom in" @click="zoomBy(1 / 1.5)">
           <FontAwesomeIcon icon="magnifying-glass-plus" />
         </button>
-        <button type="button" class="icon-btn" aria-label="Zoom out" title="Zoom out" @click="zoomBy(1.5)">
+        <button type="button" class="icon-btn zoom-btn" aria-label="Zoom out" title="Zoom out" @click="zoomBy(1.5)">
           <FontAwesomeIcon icon="magnifying-glass-minus" />
         </button>
         <span class="tools-sep" aria-hidden="true"></span>
@@ -88,36 +88,12 @@
                 :disabled="planetaryMaps.length < 2" @click="toggleCompare">
           <FontAwesomeIcon icon="adjust" />
         </button>
-        <div class="overlays-anchor">
-          <button type="button" class="icon-btn" :class="{ 'has-active': overlayCount > 0 }" :aria-expanded="overlaysOpen"
-                  aria-controls="overlays-menu" aria-label="Map overlays" title="Map overlays" @click="overlaysOpen = !overlaysOpen">
-            <FontAwesomeIcon icon="layer-group" />
-            <span v-if="overlayCount" class="badge" aria-hidden="true">{{ overlayCount }}</span>
-          </button>
-          <transition name="rise">
-            <div v-if="overlaysOpen" id="overlays-menu" class="overlays-menu panel" role="group" aria-label="Map overlays"
-                 @keydown.esc.stop="overlaysOpen = false">
-              <button type="button" role="switch" class="overlay-switch" :aria-checked="showMaria" @click="showMaria = !showMaria">
-                <span class="sw" aria-hidden="true"></span>
-                <span class="sw-text"><b>Maria</b><small>Where ancient lava flooded the basins</small></span>
-                <span class="sw-key key-maria" aria-hidden="true"></span>
-              </button>
-              <button type="button" role="switch" class="overlay-switch" :aria-checked="showCraters" @click="showCraters = !showCraters">
-                <span class="sw" aria-hidden="true"></span>
-                <span class="sw-text"><b>Craters</b><small>1.3 million rims, sharper as you zoom in</small></span>
-                <span class="sw-key key-craters" aria-hidden="true"></span>
-              </button>
-              <button type="button" role="switch" class="overlay-switch" :aria-checked="showLabels" @click="showLabels = !showLabels">
-                <span class="sw" aria-hidden="true"></span>
-                <span class="sw-text"><b>Names &amp; grid</b><small>Seas, craters and latitude lines</small></span>
-                <span class="sw-key key-grid" aria-hidden="true"></span>
-              </button>
-              <p class="overlay-credit">
-                Maria: LROC (Nelson et al. 2014). Craters: Robbins (2019) lunar crater database.
-              </p>
-            </div>
-          </transition>
-        </div>
+        <button ref="overlaysBtn" type="button" class="icon-btn overlays-btn" :class="{ 'has-active': overlayCount > 0 }"
+                :aria-expanded="overlaysOpen" aria-controls="overlays-menu" aria-label="Map overlays" title="Map overlays"
+                @click="toggleOverlays">
+          <FontAwesomeIcon icon="layer-group" />
+          <span v-if="overlayCount" class="badge" aria-hidden="true">{{ overlayCount }}</span>
+        </button>
         <button type="button" class="icon-btn" :aria-pressed="tonightOpen" aria-label="Tonight's Moon: sunlight and phase" title="Tonight's Moon"
                 @click="toggleTonight">
           <FontAwesomeIcon icon="moon" />
@@ -142,20 +118,29 @@
         </button>
       </div>
 
-      <!-- Bottom-left launchers -->
-      <div class="launchers">
-        <button type="button" class="btn launcher" :aria-pressed="explorePanel === 'sites'" @click="openExplore('sites')">
-          <FontAwesomeIcon icon="rocket" /> Explore
-        </button>
-        <button type="button" class="btn launcher" :aria-pressed="explorePanel === 'tours'" @click="openExplore('tours')">
-          <FontAwesomeIcon icon="route" /> Tours
-        </button>
-        <button v-if="prevMapIndex >= 0 && !compareOpen" type="button" class="icon-btn launcher-icon"
-                :aria-label="`Back to ${shortName(planetaryMaps[prevMapIndex])}`" :title="`Back to ${shortName(planetaryMaps[prevMapIndex])}`"
-                @click="goToPrevious">
-          <FontAwesomeIcon icon="rotate-left" />
-        </button>
-      </div>
+      <transition name="rise">
+        <div v-if="overlaysOpen" id="overlays-menu" class="overlays-menu panel" role="group" aria-label="Map overlays"
+             :style="overlaysMenuStyle" @keydown.esc.stop="overlaysOpen = false">
+          <button type="button" role="switch" class="overlay-switch" :aria-checked="showMaria" @click="showMaria = !showMaria">
+            <span class="sw" aria-hidden="true"></span>
+            <span class="sw-text"><b>Maria</b><small>Where ancient lava flooded the basins</small></span>
+            <span class="sw-key key-maria" aria-hidden="true"></span>
+          </button>
+          <button type="button" role="switch" class="overlay-switch" :aria-checked="showCraters" @click="showCraters = !showCraters">
+            <span class="sw" aria-hidden="true"></span>
+            <span class="sw-text"><b>Craters</b><small>1.3 million rims, sharper as you zoom in</small></span>
+            <span class="sw-key key-craters" aria-hidden="true"></span>
+          </button>
+          <button type="button" role="switch" class="overlay-switch" :aria-checked="showLabels" @click="showLabels = !showLabels">
+            <span class="sw" aria-hidden="true"></span>
+            <span class="sw-text"><b>Names &amp; grid</b><small>Seas, craters and latitude lines</small></span>
+            <span class="sw-key key-grid" aria-hidden="true"></span>
+          </button>
+          <p class="overlay-credit">
+            Maria: LROC (Nelson et al. 2014). Craters: Robbins (2019) lunar crater database.
+          </p>
+        </div>
+      </transition>
 
       <transition name="rise">
         <ExplorePanel
@@ -174,7 +159,7 @@
 
       <transition name="rise">
         <SiteCard
-          v-if="selectedSite && !tour"
+          v-if="selectedSite && !tour && !(isCompact && explorePanel) && !(isShort && dockOpen)"
           :key="selectedSite.id"
           :site="selectedSite"
           :current-layer-id="currentLayer?.id ?? ''"
@@ -183,118 +168,170 @@
         />
       </transition>
 
-      <!-- Bottom-center dock: compare, tonight, listen, tour -->
-      <div class="dock">
-        <transition name="rise">
-          <TourPanel
-            v-if="tour"
-            :tour="tour.def"
-            :index="tour.index"
-            :arrived="tourArrived"
-            @step="stepTour"
-            @exit="exitTour"
-          />
-        </transition>
-
-        <transition name="rise">
-          <section v-if="compareOpen" class="dock-panel panel compare-panel" aria-label="Compare maps">
-            <label class="cmp-pick">
-              <span class="visually-hidden">Map to compare with</span>
-              <select :value="compareIndex" @change="setCompareIndex(Number(($event.target as HTMLSelectElement).value))">
-                <option v-for="(name, i) in planetaryMaps" :key="name" :value="i" :disabled="i === curMapIndex">
-                  {{ layerByName(name)?.tabLabel ?? shortName(name) }}
-                </option>
-              </select>
-            </label>
-            <input
-              type="range"
-              class="cmp-range"
-              min="0"
-              max="100"
-              v-model.number="manualOpacity"
-              @input="applyManualOpacity"
-              :aria-label="`Blend from ${compareLayer?.tabLabel} to ${currentLayer?.tabLabel}`"
-              :aria-valuetext="`${manualOpacity}% ${currentLayer?.tabLabel}`"
+      <!-- Bottom bar: launchers | dock | HUD stack. One grid, so they can't overlap. -->
+      <div ref="bottomBar" class="bottom-bar">
+        <!-- Bottom-left launchers -->
+        <div ref="launchers" class="launchers">
+          <button type="button" class="btn launcher" :aria-pressed="explorePanel === 'sites'" @click="openExplore('sites')">
+            <FontAwesomeIcon icon="rocket" /> Explore
+          </button>
+          <button type="button" class="btn launcher" :aria-pressed="explorePanel === 'tours'" @click="openExplore('tours')">
+            <FontAwesomeIcon icon="route" /> Tours
+          </button>
+          <button v-if="prevMapIndex >= 0 && !compareOpen" type="button" class="icon-btn launcher-icon"
+                  :aria-label="`Back to ${shortName(planetaryMaps[prevMapIndex])}`" :title="`Back to ${shortName(planetaryMaps[prevMapIndex])}`"
+                  @click="goToPrevious">
+            <FontAwesomeIcon icon="rotate-left" />
+          </button>
+        </div>
+        <!-- Bottom-center dock: compare, tonight, listen, tour -->
+        <div ref="dock" class="dock">
+          <transition name="rise">
+            <TourPanel
+              v-if="tour"
+              :tour="tour.def"
+              :index="tour.index"
+              :arrived="tourArrived"
+              @step="stepTour"
+              @exit="exitTour"
             />
-            <span class="cmp-label">{{ currentLayer?.tabLabel ?? shortName(currentMapName) }}</span>
-            <button type="button" class="icon-btn" aria-label="Close compare" @click="toggleCompare">
-              <FontAwesomeIcon icon="times" />
-            </button>
-          </section>
-        </transition>
+          </transition>
 
-        <transition name="rise">
-          <section v-if="tonightOpen && lighting" class="dock-panel panel tonight-panel" aria-label="Tonight's Moon">
-            <div class="tonight-phase">
-              <svg viewBox="-20 -20 40 40" class="phase-icon" aria-hidden="true">
-                <circle r="18" fill="#2a2b31" />
-                <path :d="phasePath" fill="#e8e4da" />
-              </svg>
-              <div>
-                <p class="tonight-name">{{ lighting.phaseName }}</p>
-                <p class="tonight-meta">{{ Math.round(lighting.illuminated * 100) }}% lit · {{ tonightDateLabel }}</p>
-              </div>
-            </div>
-            <div class="tonight-controls">
-              <button type="button" class="icon-btn" :aria-label="tonightPlaying ? 'Pause the lunar month' : 'Play a lunar month'"
-                      @click="toggleTonightPlay">
-                <FontAwesomeIcon :icon="tonightPlaying ? 'pause' : 'play'" />
-              </button>
+          <transition name="rise">
+            <section v-if="compareOpen" class="dock-panel panel compare-panel" aria-label="Compare maps">
+              <label class="cmp-pick">
+                <span class="visually-hidden">Map to compare with</span>
+                <select :value="compareIndex" @change="setCompareIndex(Number(($event.target as HTMLSelectElement).value))">
+                  <option v-for="(name, i) in planetaryMaps" :key="name" :value="i" :disabled="i === curMapIndex">
+                    {{ layerByName(name)?.tabLabel ?? shortName(name) }}
+                  </option>
+                </select>
+              </label>
               <input
                 type="range"
-                class="tonight-range"
-                min="-15"
-                max="15"
-                step="0.25"
-                v-model.number="tonightOffsetDays"
-                aria-label="Days from today"
-                :aria-valuetext="tonightDateLabel"
+                class="cmp-range"
+                min="0"
+                max="100"
+                v-model.number="manualOpacity"
+                @input="applyManualOpacity"
+                :aria-label="`Blend from ${compareLayer?.tabLabel} to ${currentLayer?.tabLabel}`"
+                :aria-valuetext="`${manualOpacity}% ${currentLayer?.tabLabel}`"
               />
-              <button type="button" class="btn btn-small btn-ghost" @click="tonightOffsetDays = 0">Today</button>
-              <button type="button" class="icon-btn" aria-label="Close tonight's Moon" @click="toggleTonight">
+              <span class="cmp-label">{{ currentLayer?.tabLabel ?? shortName(currentMapName) }}</span>
+              <button type="button" class="icon-btn" aria-label="Close compare" @click="toggleCompare">
                 <FontAwesomeIcon icon="times" />
               </button>
-            </div>
-          </section>
-        </transition>
+            </section>
+          </transition>
 
-        <transition name="rise">
-          <section v-if="listenOpen" class="dock-panel panel listen-panel" aria-label="Listen to the terrain">
-            <div class="listen-head">
-              <p class="listen-hint" v-if="!profile">
-                Drag a line across the Moon to hear its shape. Higher ground plays a higher note.
-              </p>
-              <div class="listen-chart" v-else>
-                <svg :viewBox="`0 0 ${chart.w} ${chart.h}`" preserveAspectRatio="none" aria-hidden="true">
-                  <path :d="chart.area" class="chart-area" />
-                  <path :d="chart.line" class="chart-line" />
-                  <line v-if="playhead >= 0" :x1="playhead * chart.w" :x2="playhead * chart.w" y1="0" :y2="chart.h" class="chart-head" />
+          <transition name="rise">
+            <section v-if="tonightOpen && lighting" class="dock-panel panel tonight-panel" aria-label="Tonight's Moon">
+              <div class="tonight-phase">
+                <svg viewBox="-20 -20 40 40" class="phase-icon" aria-hidden="true">
+                  <circle r="18" fill="#2a2b31" />
+                  <path :d="phasePath" fill="#e8e4da" />
                 </svg>
-                <p class="listen-stats">{{ profileSummary }}</p>
+                <div>
+                  <p class="tonight-name">{{ lighting.phaseName }}</p>
+                  <p class="tonight-meta">{{ Math.round(lighting.illuminated * 100) }}% lit · {{ tonightDateLabel }}</p>
+                </div>
               </div>
-              <button type="button" class="icon-btn" aria-label="Close listen tool" @click="toggleListen">
-                <FontAwesomeIcon icon="times" />
-              </button>
-            </div>
-            <div class="listen-actions">
-              <button type="button" class="btn btn-small btn-secondary" @click="listenAcrossView">
-                <FontAwesomeIcon icon="arrows-alt" /> Across the view
-              </button>
-              <button v-if="profile" type="button" class="btn btn-small btn-primary" @click="playCurrentProfile">
-                <FontAwesomeIcon icon="play" /> Play again
-              </button>
-            </div>
-            <p class="listen-msg" v-if="listenMessage" role="status">{{ listenMessage }}</p>
-          </section>
-        </transition>
-      </div>
+              <div class="tonight-controls">
+                <button type="button" class="icon-btn" :aria-label="tonightPlaying ? 'Pause the lunar month' : 'Play a lunar month'"
+                        @click="toggleTonightPlay">
+                  <FontAwesomeIcon :icon="tonightPlaying ? 'pause' : 'play'" />
+                </button>
+                <input
+                  type="range"
+                  class="tonight-range"
+                  min="-15"
+                  max="15"
+                  step="0.25"
+                  v-model.number="tonightOffsetDays"
+                  aria-label="Days from today"
+                  :aria-valuetext="tonightDateLabel"
+                />
+                <button type="button" class="btn btn-small btn-ghost" @click="tonightOffsetDays = 0">Today</button>
+                <button type="button" class="icon-btn" aria-label="Close tonight's Moon" @click="toggleTonight">
+                  <FontAwesomeIcon icon="times" />
+                </button>
+              </div>
+            </section>
+          </transition>
 
-      <!-- Legends: both while comparing (L12) -->
-      <div class="legends" v-if="legends.length && !(isNarrow && dockOpen)">
-        <figure v-for="l in legends" :key="l.src" class="legend">
-          <figcaption>{{ l.label }}</figcaption>
-          <img :src="l.src" :alt="l.alt" />
-        </figure>
+          <transition name="rise">
+            <section v-if="listenOpen" class="dock-panel panel listen-panel" aria-label="Listen to the terrain">
+              <div class="listen-head">
+                <p class="listen-hint" v-if="!profile">
+                  Drag a line across the Moon to hear its shape. Higher ground plays a higher note.
+                </p>
+                <div class="listen-chart" v-else>
+                  <svg :viewBox="`0 0 ${chart.w} ${chart.h}`" preserveAspectRatio="none" aria-hidden="true">
+                    <path :d="chart.area" class="chart-area" />
+                    <path :d="chart.line" class="chart-line" />
+                    <line v-if="playhead >= 0" :x1="playhead * chart.w" :x2="playhead * chart.w" y1="0" :y2="chart.h" class="chart-head" />
+                  </svg>
+                  <p class="listen-stats">{{ profileSummary }}</p>
+                </div>
+                <button type="button" class="icon-btn" aria-label="Close listen tool" @click="toggleListen">
+                  <FontAwesomeIcon icon="times" />
+                </button>
+              </div>
+              <div class="listen-actions">
+                <button type="button" class="btn btn-small btn-secondary" @click="listenAcrossView">
+                  <FontAwesomeIcon icon="arrows-alt" /> Across the view
+                </button>
+                <button v-if="profile" type="button" class="btn btn-small btn-primary" @click="playCurrentProfile">
+                  <FontAwesomeIcon icon="play" /> Play again
+                </button>
+              </div>
+              <p class="listen-msg" v-if="listenMessage" role="status">{{ listenMessage }}</p>
+            </section>
+          </transition>
+        </div>
+        <div ref="stack" class="br-stack">
+          <div class="legends" v-if="legends.length && !((isNarrow || isShort) && dockOpen)">
+            <figure v-for="l in legends" :key="l.src" class="legend">
+              <figcaption>{{ l.label }}</figcaption>
+              <img :src="l.src" :alt="l.alt" />
+            </figure>
+          </div>
+          <div class="hud" v-if="hud && !attractMode && !((isNarrow || isShort) && dockOpen)" aria-hidden="true">
+            <div class="hud-row hud-coords">
+              <span class="hud-tag">{{ hud.pointer ? "Cursor" : "Center" }}</span>
+              <span>{{ hud.coords }}</span>
+            </div>
+            <div class="hud-row hud-extra" v-if="hud.elevation">
+              <span class="hud-tag">Height</span>
+              <span>{{ hud.elevation }}</span>
+            </div>
+            <div class="hud-row" v-if="hud.terrain">
+              <span class="hud-tag">Terrain</span>
+              <span>{{ hud.terrain }}</span>
+            </div>
+            <div class="hud-row" v-if="hud.crater">
+              <span class="hud-tag">Crater</span>
+              <span>{{ hud.crater }}</span>
+            </div>
+            <div class="hud-row" v-if="hud.density">
+              <span class="hud-tag">Craters</span>
+              <span>{{ hud.density }}</span>
+            </div>
+            <div class="hud-row hud-scale" v-if="hud.scaleKm">
+              <span class="scale-bar" :style="{ width: hud.scalePx + 'px' }"></span>
+              <span>{{ hud.scaleKm }}</span>
+            </div>
+            <div class="hud-row hud-side hud-extra" :class="hud.farSide ? 'far' : 'near'">
+              <span class="side-dot"></span>
+              <span>{{ hud.farSide ? "Far side · never seen from Earth" : "Near side · faces Earth" }}</span>
+            </div>
+          </div>
+          <a class="credits" href="https://worldwidetelescope.org" target="_blank" rel="noopener">
+            <span>Powered by</span>
+            <img alt="" aria-hidden="true" :src="wwtLogo" />
+            <span class="credits-name">WorldWide Telescope</span>
+          </a>
+        </div>
       </div>
 
       <!-- Attract-loop caption (kiosk) -->
@@ -306,12 +343,6 @@
         </div>
       </transition>
 
-      <div class="credits">
-        <span>Powered by</span>
-        <a href="https://worldwidetelescope.org" target="_blank" rel="noopener" aria-label="WorldWide Telescope">
-          <img alt="WorldWide Telescope" :src="wwtLogo" />
-        </a>
-      </div>
     </template>
 
     <!-- Layer info (focus-managed dialog) -->
@@ -377,6 +408,7 @@ import IntroDialog from "./components/IntroDialog.vue";
 import ExplorePanel from "./components/ExplorePanel.vue";
 import SiteCard from "./components/SiteCard.vue";
 import TourPanel from "./components/TourPanel.vue";
+import LoadingMoon from "./components/LoadingMoon.vue";
 import KioskQrModal from "./KioskQrModal.vue";
 
 import { LAYER_META, LayerMeta, DEFAULT_LAYER_ID, layerById, layerByName, comparePrompt } from "./data/layers";
@@ -396,7 +428,7 @@ import {
 import { statsInit, statsSessionStart, statsSessionEnd, statsTrack } from "./kioskStats";
 import { boolParam, stringParam } from "./urlParams";
 
-import lmLogo from "./assets/LM-12_w.svg";
+import ipEmblem from "./assets/ip-wordmark-white.svg";
 import wwtLogo from "./assets/logo_wwt.png";
 
 const MOON_WTML_URL = "https://web.wwtassets.org/kiosk/2022/moon/moon_maps_v4.wtml";
@@ -413,13 +445,30 @@ const ATTRACT_SITES = ["tycho", "apollo11", "copernicus", "apollo15", "orientale
 
 interface ActiveTour { def: Tour; index: number }
 
+interface HudData {
+  pointer: boolean;
+  coords: string;
+  elevation: string;
+  scaleKm: string;
+  scalePx: number;
+  farSide: boolean;
+  terrain: string;
+  crater: string;
+  density: string;
+}
+
+// Breakpoints shared with the stylesheet.
+const NARROW_PX = 640;   // phone layout: tools become a row under the map picker
+const COMPACT_PX = 900;  // side panels can't sit side by side
+const SHORT_PX = 500;    // landscape phones: one dock tool at a time
+
 export default defineComponent({
   name: "LunarViewer",
 
   extends: WWTAwareComponent,
 
   // eslint-disable-next-line @typescript-eslint/naming-convention -- PascalCase component registration
-  components: { SurfaceOverlay, IntroDialog, ExplorePanel, SiteCard, TourPanel, KioskQrModal },
+  components: { SurfaceOverlay, IntroDialog, ExplorePanel, SiteCard, TourPanel, KioskQrModal, LoadingMoon },
 
   props: {
     wwtNamespace: { type: String, required: true },
@@ -428,7 +477,7 @@ export default defineComponent({
 
   data() {
     return {
-      lmLogo,
+      ipEmblem,
       wwtLogo,
       layerByName,
       qrAutoCloseMs: KIOSK_QR_AUTOCLOSE_MS,
@@ -494,7 +543,15 @@ export default defineComponent({
       idle: null as IdleWatcher | null,
       kioskCleanup: [] as (() => void)[],
 
-      isNarrow: window.innerWidth <= 640,
+      isNarrow: window.innerWidth <= NARROW_PX,
+      isCompact: window.innerWidth <= COMPACT_PX,
+      isShort: window.innerHeight <= SHORT_PX,
+
+      hud: null as HudData | null,
+      // Measured chrome, so panels size themselves into the free space (px).
+      layout: { top: 96, left: 80, right: 80, toolsW: 60 },
+      overlaysAnchor: { top: 0, bottom: 0 },
+      layoutObserver: null as ResizeObserver | null,
     };
   },
 
@@ -532,6 +589,19 @@ export default defineComponent({
     },
     attractSite(): Site | undefined {
       return siteById(this.attractSiteId);
+    },
+    layoutVars(): Record<string, string> {
+      return {
+        "--top-reserve": `${Math.round(this.layout.top)}px`,
+        "--reserve-left": `${Math.round(this.layout.left)}px`,
+        "--reserve-right": `${Math.round(this.layout.right)}px`,
+        "--tools-w": `${Math.round(this.layout.toolsW)}px`,
+      };
+    },
+    overlaysMenuStyle(): Record<string, string> {
+      const below = this.isNarrow || this.isShort;
+      const top = Math.round(below ? this.overlaysAnchor.bottom + 8 : this.overlaysAnchor.top);
+      return { top: `${top}px`, "--menu-top": `${top}px` };
     },
     overlayCount(): number {
       return Number(this.showLabels) + Number(this.showMaria) + Number(this.showCraters);
@@ -592,6 +662,9 @@ export default defineComponent({
   },
 
   watch: {
+    isLoading(v: boolean) {
+      if (!v) { this.$nextTick(() => this.observeLayout()); }
+    },
     // Keep the URL shareable: ?map=…&site=… (L10 deep links).
     curMapIndex() { this.syncUrl(); },
     selectedSiteId() { this.syncUrl(); },
@@ -609,6 +682,7 @@ export default defineComponent({
   unmounted() {
     window.removeEventListener("keydown", this.onKeyDown);
     window.removeEventListener("resize", this.onResize);
+    this.layoutObserver?.disconnect();
     cancelAnimationFrame(this.crossfadeRaf);
     cancelAnimationFrame(this.tonightRaf);
     window.clearTimeout(this.attractTimer);
@@ -785,6 +859,7 @@ export default defineComponent({
       if (this.planetaryMaps.length < 2) { return; }
       if (this.isCrossfading) { this.finishCrossfade(this.currentMapName); }
       if (!this.compareOpen) {
+        this.makeRoomInDock("compare");
         const n = this.planetaryMaps.length;
         const idx = this.prevMapIndex >= 0 && this.prevMapIndex !== this.curMapIndex
           ? this.prevMapIndex
@@ -847,7 +922,7 @@ export default defineComponent({
     },
 
     onCardSelect(site: Site): void {
-      if (this.isNarrow) { this.explorePanel = null; }
+      if (this.isCompact) { this.explorePanel = null; }
       this.onMarkerSelect(site);
     },
 
@@ -877,8 +952,9 @@ export default defineComponent({
       const def = tourById(id);
       if (!def) { return; }
       this.explorePanel = null;
-      this.listenOpen = false;
+      if (this.listenOpen) { this.toggleListen(); }
       if (this.compareOpen) { this.toggleCompare(); }
+      if (this.isShort && this.tonightOpen) { this.toggleTonight(); }
       this.tour = { def: markRaw(def), index: 0 };
       this.goToTourStop();
     },
@@ -920,6 +996,7 @@ export default defineComponent({
 
     // ── Tonight's Moon (L20) ───────────────────────────────────────────────
     toggleTonight(): void {
+      if (!this.tonightOpen) { this.makeRoomInDock("tonight"); }
       this.tonightOpen = !this.tonightOpen;
       this.stopTonightPlay();
       if (this.tonightOpen) {
@@ -954,6 +1031,7 @@ export default defineComponent({
 
     // ── Listen (L18) ───────────────────────────────────────────────────────
     async toggleListen(): Promise<void> {
+      if (!this.listenOpen) { this.makeRoomInDock("listen"); }
       this.listenOpen = !this.listenOpen;
       stopProfile();
       this.playhead = -1;
@@ -1045,7 +1123,80 @@ export default defineComponent({
     },
 
     onResize(): void {
-      this.isNarrow = window.innerWidth <= 640;
+      this.isNarrow = window.innerWidth <= NARROW_PX;
+      this.isCompact = window.innerWidth <= COMPACT_PX;
+      this.isShort = window.innerHeight <= SHORT_PX;
+      this.measureLayout();
+    },
+
+    // On short screens the dock only has room for one tool; opening one
+    // closes the others (a tour counts as a tool too).
+    makeRoomInDock(keep: "compare" | "tonight" | "listen"): void {
+      if (!this.isShort) { return; }
+      if (keep !== "compare" && this.compareOpen) { this.toggleCompare(); }
+      if (keep !== "tonight" && this.tonightOpen) { this.toggleTonight(); }
+      if (keep !== "listen" && this.listenOpen) { this.toggleListen(); }
+      if (this.tour) { this.exitTour(); }
+    },
+
+    // ── Layout ─────────────────────────────────────────────────────────────
+    // The chrome is measured rather than assumed: side panels and the tools
+    // column then fit between the real top area and the real bottom bar, so
+    // a longer caption, a taller dock or a bigger HUD can never overlap them.
+    observeLayout(): void {
+      this.layoutObserver?.disconnect();
+      const ro = new ResizeObserver(() => this.measureLayout());
+      for (const key of ["titleChip", "layerBar", "caption", "tools", "launchers", "dock", "stack", "bottomBar"]) {
+        const el = this.$refs[key] as HTMLElement | undefined;
+        if (el) { ro.observe(el); }
+      }
+      this.layoutObserver = markRaw(ro);
+      this.measureLayout();
+    },
+
+    measureLayout(): void {
+      const root = this.$refs.root as HTMLElement | undefined;
+      if (!root) { return; }
+      const box = root.getBoundingClientRect();
+      const rect = (key: string): DOMRect | null => {
+        const el = this.$refs[key] as HTMLElement | undefined;
+        if (!el || el.offsetParent === null) { return null; }
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 ? r : null;
+      };
+      // Top: the lowest of the title chip, map picker, caption (and, on
+      // phones, the tools row).
+      let top = 0;
+      const toolsInTopRow = this.isNarrow || this.isShort;
+      for (const key of ["titleChip", "layerBar", "caption", ...(toolsInTopRow ? ["tools"] : [])]) {
+        const r = rect(key);
+        if (r) { top = Math.max(top, r.bottom - box.top); }
+      }
+      // Bottom: each side reserves the taller of its own column and the dock,
+      // since side panels can reach over the dock horizontally.
+      const fromBottom = (r: DOMRect | null): number => (r ? box.bottom - r.top : 0);
+      const dockR = (this.$refs.dock as HTMLElement | undefined)?.childElementCount ? rect("dock") : null;
+      const dock = fromBottom(dockR);
+      const launchers = fromBottom(rect("launchers"));
+      const stack = fromBottom(rect("stack"));
+      const tools = rect("tools");
+      this.layout = {
+        top: top + 10,
+        left: Math.max(launchers, dock),
+        right: Math.max(stack, dock),
+        toolsW: !this.isNarrow && tools ? box.right - tools.left : 0,
+      };
+      const btn = (this.$refs.overlaysBtn as HTMLElement | undefined)?.getBoundingClientRect();
+      if (btn) {
+        this.overlaysAnchor = toolsInTopRow
+          ? { top: btn.top - box.top, bottom: (tools?.bottom ?? btn.bottom) - box.top }
+          : { top: btn.top - box.top, bottom: btn.bottom - box.top };
+      }
+    },
+
+    toggleOverlays(): void {
+      this.measureLayout();
+      this.overlaysOpen = !this.overlaysOpen;
     },
 
     // ── Deep links ─────────────────────────────────────────────────────────
@@ -1189,12 +1340,6 @@ export default defineComponent({
   font-size: 1.4rem;
 
   p { margin: 0; }
-
-  .spinner {
-    width: 3rem;
-    height: 3rem;
-    background: url("assets/lunar_loader.gif") no-repeat center / contain;
-  }
 }
 
 .boot-error {
@@ -1244,7 +1389,7 @@ export default defineComponent({
     text-overflow: ellipsis;
   }
 
-  &:hover { border-color: rgba(242, 196, 109, 0.5); }
+  &:hover { border-color: rgba(var(--accent-rgb), 0.5); }
 }
 
 // ── Layer tabs ─────────────────────────────────────────────────────────────
@@ -1332,8 +1477,17 @@ export default defineComponent({
   border: 1px solid var(--border);
   background: var(--surface);
   backdrop-filter: blur(8px);
+  // Never run into the bottom-right stack; scroll instead on short screens.
+  max-height: calc(100% - 1.5rem - var(--reserve-right, 0px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  &::-webkit-scrollbar { display: none; }
+
+  .icon-btn { flex-shrink: 0; }
 
   .tools-sep {
+    flex-shrink: 0;
     height: 1px;
     margin: 0.2rem 0.4rem;
     background: var(--border);
@@ -1342,10 +1496,10 @@ export default defineComponent({
 
 // ── Overlays popover ───────────────────────────────────────────────────────
 
-.overlays-anchor {
+.overlays-btn {
   position: relative;
 
-  .has-active { color: var(--accent); }
+  &.has-active { color: var(--accent); }
   .badge {
     position: absolute;
     top: 3px;
@@ -1363,11 +1517,16 @@ export default defineComponent({
   }
 }
 
+// Lives outside the (scrollable) tools column; its top comes from the
+// button's measured position, and it sits just left of the column.
 .overlays-menu {
   position: absolute;
-  top: 0;
-  right: calc(100% + 0.6rem);
+  z-index: 40;
+  right: calc(var(--tools-w, 4rem) + 0.5rem);
   width: 17.5rem;
+  max-width: calc(100% - 1.5rem);
+  max-height: calc(100% - var(--menu-top, 0px) - var(--reserve-right, 0px) - 0.75rem);
+  overflow-y: auto;
   padding: 0.5rem;
   display: flex;
   flex-direction: column;
@@ -1429,13 +1588,13 @@ export default defineComponent({
     height: 16px;
     border-radius: 4px;
   }
-  .key-maria { background: rgba(118, 146, 255, 0.35); border: 1.5px solid rgba(160, 182, 255, 0.95); }
+  .key-maria { background: rgba(150, 128, 255, 0.35); border: 1.5px solid rgba(186, 170, 255, 0.95); }
   .key-craters { border-radius: 50%; border: 1.5px solid rgba(255, 214, 102, 0.9); }
   .key-grid {
-    border: 1px solid rgba(242, 196, 109, 0.6);
+    border: 1px solid rgba(var(--accent-rgb), 0.6);
     background:
-      linear-gradient(rgba(242, 196, 109, 0.6), rgba(242, 196, 109, 0.6)) center / 1px 100% no-repeat,
-      linear-gradient(rgba(242, 196, 109, 0.6), rgba(242, 196, 109, 0.6)) center / 100% 1px no-repeat;
+      linear-gradient(rgba(var(--accent-rgb), 0.6), rgba(var(--accent-rgb), 0.6)) center / 1px 100% no-repeat,
+      linear-gradient(rgba(var(--accent-rgb), 0.6), rgba(var(--accent-rgb), 0.6)) center / 100% 1px no-repeat;
   }
 }
 
@@ -1446,16 +1605,33 @@ export default defineComponent({
   color: var(--text-muted);
 }
 
-// ── Launchers ──────────────────────────────────────────────────────────────
+// ── Bottom bar ─────────────────────────────────────────────────────────────
+// Launchers, dock and the HUD stack share one grid, so they can't overlap.
+// Wide: three columns. Medium: the dock gets its own row on top. Phone: one
+// column, everything stacked.
 
-.launchers {
+.bottom-bar {
   position: absolute;
   left: 0.75rem;
-  bottom: 2rem;
-  z-index: 20;
+  right: 0.75rem;
+  bottom: 0.5rem;
+  z-index: 22;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "launch dock stack";
+  align-items: end;
+  gap: 0.6rem 0.75rem;
+  pointer-events: none;
+}
+
+.launchers {
+  grid-area: launch;
+  justify-self: start;
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  margin-bottom: 1.4rem;
+  pointer-events: auto;
 
   .launcher {
     background: var(--surface);
@@ -1463,7 +1639,7 @@ export default defineComponent({
     color: var(--text);
     backdrop-filter: blur(8px);
 
-    &:hover { border-color: rgba(242, 196, 109, 0.6); }
+    &:hover { border-color: rgba(var(--accent-rgb), 0.6); }
     &[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
   }
 
@@ -1476,20 +1652,17 @@ export default defineComponent({
   }
 }
 
-// ── Dock ───────────────────────────────────────────────────────────────────
-
 .dock {
-  position: absolute;
-  left: 50%;
-  bottom: 2rem;
-  transform: translateX(-50%);
-  z-index: 22;
-  width: min(34rem, calc(100vw - 1.5rem));
+  grid-area: dock;
+  justify-self: center;
+  width: min(34rem, 100%);
   display: flex;
   flex-direction: column-reverse;
   gap: 0.5rem;
+  margin-bottom: 1.4rem;
   pointer-events: none;
 
+  &:empty { display: none; }
   > * { pointer-events: auto; }
 
   .tour-panel {
@@ -1497,6 +1670,15 @@ export default defineComponent({
     transform: none;
     width: auto;
   }
+}
+
+.br-stack {
+  grid-area: stack;
+  justify-self: end;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.4rem;
 }
 
 .dock-panel {
@@ -1563,8 +1745,8 @@ export default defineComponent({
   .listen-chart {
     flex: 1;
     svg { width: 100%; height: 56px; display: block; }
-    .chart-area { fill: rgba(124, 198, 240, 0.18); }
-    .chart-line { fill: none; stroke: var(--robotic-color); stroke-width: 2; vector-effect: non-scaling-stroke; }
+    .chart-area { fill: rgba(var(--accent-rgb), 0.18); }
+    .chart-line { fill: none; stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
     .chart-head { stroke: #fff; stroke-width: 2; vector-effect: non-scaling-stroke; }
   }
   .listen-stats {
@@ -1584,13 +1766,9 @@ export default defineComponent({
   }
 }
 
-// ── Legends ────────────────────────────────────────────────────────────────
+// ── Legends, HUD, credits (bottom-right stack) ─────────────────────────────
 
 .legends {
-  position: absolute;
-  right: 0.75rem;
-  bottom: 9.25rem;
-  z-index: 12;
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
@@ -1613,6 +1791,66 @@ export default defineComponent({
     margin-bottom: 0.2rem;
   }
   img { display: block; width: 13.5rem; max-width: 40vw; border-radius: 4px; }
+}
+
+.hud {
+  padding: 0.5rem 0.7rem;
+  min-width: 13.5rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(6px);
+  color: var(--text);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  pointer-events: none;
+
+  .hud-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .hud-tag {
+    min-width: 3.4rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+  }
+  .hud-scale { margin-top: 0.15rem; }
+  .scale-bar {
+    display: inline-block;
+    height: 6px;
+    border: 1.5px solid var(--text);
+    border-top: none;
+  }
+  .hud-side {
+    margin-top: 0.15rem;
+    color: var(--text-muted);
+    .side-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      border: 1.5px solid var(--text-muted);
+    }
+    &.near .side-dot { background: linear-gradient(90deg, var(--text) 50%, transparent 50%); }
+  }
+}
+
+.credits {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.1rem 0.2rem;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-decoration: none;
+  pointer-events: auto;
+
+  img { height: 18px; width: 18px; display: block; }
+  .credits-name { color: var(--text); font-weight: 600; }
+  &:hover .credits-name { text-decoration: underline; }
 }
 
 // ── Dialogs ────────────────────────────────────────────────────────────────
@@ -1734,21 +1972,7 @@ export default defineComponent({
 }
 
 #main-content.attract {
-  .title-chip, .layer-bar, .layer-caption, .tools, .launchers, .dock, .legends { opacity: 0; pointer-events: none; }
-}
-
-.credits {
-  position: absolute;
-  right: 0.75rem;
-  bottom: 0.4rem;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.72rem;
-  color: var(--text-muted);
-
-  img { height: 18px; display: block; }
+  .title-chip, .layer-bar, .layer-caption, .tools, .bottom-bar { opacity: 0; pointer-events: none; }
 }
 
 // Kiosk: larger targets, no external-navigation affordances.
@@ -1766,6 +1990,17 @@ export default defineComponent({
   }
 }
 
+// Medium: the dock gets its own row above launchers and the HUD stack.
+@media (max-width: 960px) {
+  .bottom-bar {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      "dock dock"
+      "launch stack";
+  }
+  .dock { margin-bottom: 0; }
+}
+
 @media (max-width: 860px) {
   .title-chip {
     padding: 0.3rem;
@@ -1773,7 +2008,7 @@ export default defineComponent({
   }
   .layer-bar {
     left: 3.9rem;
-    right: 4.1rem;
+    right: calc(var(--tools-w, 4rem) + 0.5rem);
     transform: none;
     max-width: none;
     justify-content: space-between;
@@ -1794,22 +2029,110 @@ export default defineComponent({
   }
 }
 
+// Phone: tools become a row under the map picker; one bottom column.
 @media (max-width: 640px) {
+  .layer-bar { right: 0.75rem; }
   .tools {
-    top: auto;
-    bottom: 4.6rem;
-    flex-direction: column;
-    .icon-btn { width: 38px; height: 38px; font-size: 0.95rem; }
-  }
-  .launchers { bottom: 1.6rem; }
-  .dock {
-    bottom: 4.6rem;
+    top: 3.6rem;
     left: 0.75rem;
-    right: 3.9rem;
-    width: auto;
-    transform: none;
+    right: 0.75rem;
+    flex-direction: row;
+    justify-content: space-between;
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0.2rem;
+    border-radius: 999px;
+
+    .icon-btn { width: 34px; height: 34px; font-size: 0.92rem; border-radius: 999px; }
+    .tools-sep { display: none; }
   }
-  .legends { bottom: auto; top: 6.6rem; right: 0.75rem; }
+  .layer-caption { top: 6.4rem; }
+  .overlays-menu {
+    left: 0.75rem;
+    right: 0.75rem;
+    width: auto;
+    max-width: none;
+  }
+  .bottom-bar {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "dock"
+      "stack"
+      "launch";
+    gap: 0.45rem;
+  }
+  .launchers { margin-bottom: 0.2rem; }
   .legend img { width: 9rem; }
+  .hud {
+    min-width: 0;
+    font-size: 0.72rem;
+    padding: 0.35rem 0.55rem;
+    .hud-extra { display: none; }
+  }
+  .credits .credits-name { display: none; }
+}
+
+// Touch screens pinch to zoom, so the zoom buttons only cost space there.
+@media (pointer: coarse) and (max-width: 860px) {
+  .tools .zoom-btn { display: none; }
+}
+
+.layer-caption.covered { visibility: hidden; }
+
+// Short but wide (landscape phones): keep launchers, dock and stack on one
+// row; there is no height to stack them.
+@media (max-height: 500px) and (min-width: 641px) {
+  .credits .credits-name { display: none; }
+  .bottom-bar {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: "launch dock stack";
+  }
+}
+
+// Short screens (landscape phones): the caption repeats the map name's
+// meaning and costs a row; the dock holds one tool at a time (see
+// openDockTool), and the tour panel scrolls.
+@media (max-height: 500px) {
+  .layer-caption { display: none; }
+  .dock .tour-panel { max-height: 52vh; overflow-y: auto; }
+  .hud .hud-extra { display: none; }
+}
+
+// Short but not phone-narrow (landscape phones, short laptop windows): the
+// tools become a row at the top right, beside a compact map picker, since
+// a column wouldn't fit. Side panels then only need to clear the bottom.
+@media (max-height: 500px) and (min-width: 641px) {
+  .title-chip {
+    padding: 0.3rem;
+    .title-text { display: none; }
+  }
+  .tools {
+    flex-direction: row;
+    max-height: none;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0.2rem;
+    border-radius: 999px;
+
+    .icon-btn { width: 34px; height: 34px; font-size: 0.92rem; border-radius: 999px; }
+    .tools-sep { width: 1px; height: auto; margin: 0.35rem 0.15rem; }
+  }
+  .layer-bar {
+    left: 3.9rem;
+    right: calc(var(--tools-w, 4rem) + 0.5rem);
+    transform: none;
+    max-width: none;
+    justify-content: space-between;
+  }
+  .site-detail { right: 0.75rem; }
+  .overlays-menu { right: 0.75rem; }
+}
+
+// Short landscape screens: tighter tools column.
+@media (max-height: 560px) and (min-width: 641px) {
+  .tools .icon-btn { width: 34px; height: 34px; font-size: 0.92rem; }
+  .launchers { margin-bottom: 0.3rem; }
+  .dock { margin-bottom: 0.3rem; }
 }
 </style>
