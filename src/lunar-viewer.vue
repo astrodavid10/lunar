@@ -178,11 +178,6 @@
           <button type="button" class="btn launcher" :aria-pressed="explorePanel === 'tours'" @click="openExplore('tours')">
             <FontAwesomeIcon icon="route" /> Tours
           </button>
-          <button v-if="prevMapIndex >= 0 && !compareOpen" type="button" class="icon-btn launcher-icon"
-                  :aria-label="`Back to ${shortName(planetaryMaps[prevMapIndex])}`" :title="`Back to ${shortName(planetaryMaps[prevMapIndex])}`"
-                  @click="goToPrevious">
-            <FontAwesomeIcon icon="rotate-left" />
-          </button>
         </div>
         <!-- Bottom-center dock: compare, tonight, listen, tour -->
         <div ref="dock" class="dock">
@@ -848,10 +843,6 @@ export default defineComponent({
       this.setForegroundImageByName(name);
       this.setForegroundOpacity(100);
       this.isCrossfading = false;
-    },
-
-    goToPrevious(): void {
-      if (this.prevMapIndex >= 0) { this.switchToMap(this.prevMapIndex); }
     },
 
     // ── Compare (L12) ──────────────────────────────────────────────────────
@@ -1641,14 +1632,6 @@ export default defineComponent({
 
     &:hover { border-color: rgba(var(--accent-rgb), 0.6); }
     &[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
-  }
-
-  .launcher-icon {
-    width: 44px;
-    height: 44px;
-    border-radius: 999px;
-    background: var(--surface);
-    border: 1px solid var(--border);
   }
 }
 
