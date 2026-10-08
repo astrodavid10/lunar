@@ -497,7 +497,8 @@ export default defineComponent({
       const e: ScreenPoint = { x: 0, y: 0, visible: false, facing: 0 };
       const nn: ScreenPoint = { x: 0, y: 0, visible: false, facing: 0 };
       const kmPerDeg = (Math.PI * 1737.4) / 180;
-      const seg = 20;
+      const q: Vec3 = [0, 0, 0];
+      const qp: ScreenPoint = { x: 0, y: 0, visible: false, facing: 0 };
       g.beginPath();
       for (const list of lists) {
         for (let i = 0; i < list.length; i += 3) {
@@ -509,20 +510,59 @@ export default defineComponent({
           if (d >= 1 && c.x >= 0 && c.y >= 0 && c.x <= w && c.y <= h) { density++; }
           if (d < minKm || n >= maxDrawn) { continue; }
           const rDeg = d / 2 / kmPerDeg;
-          const coslat = Math.max(0.02, Math.cos((lat * Math.PI) / 180));
-          p.project(lat, lon + rDeg / coslat, e);
-          p.project(Math.min(89.999, lat + rDeg), lon, nn);
-          const ax = e.x - c.x;
-          const ay = e.y - c.y;
-          const bx = nn.x - c.x;
-          const by = nn.y - c.y;
+
+          // Local foreshortening: screen displacement per degree east and
+          // north, from a tiny step (scaled up), so the shape is exact.
+          const step = Math.min(rDeg, 0.01);
+          const coslat = Math.max(0.02, Math.cos(lat * D2R));
+          p.project(lat, lon + step / coslat, e);
+          p.project(Math.min(89.999, lat + step), lon, nn);
+          const k = rDeg / step;
+          const ax = (e.x - c.x) * k;
+          const ay = (e.y - c.y) * k;
+          const bx = (nn.x - c.x) * k;
+          const by = (nn.y - c.y) * k;
           const rPx = Math.max(Math.hypot(ax, ay), Math.hypot(bx, by));
           if (c.x + rPx < 0 || c.y + rPx < 0 || c.x - rPx > w || c.y - rPx > h) { continue; }
-          for (let k = 0; k <= seg; k++) {
-            const t = (k / seg) * 2 * Math.PI;
-            const x = c.x + ax * Math.cos(t) + bx * Math.sin(t);
-            const y = c.y + ay * Math.cos(t) + by * Math.sin(t);
-            if (k === 0) { g.moveTo(x, y); } else { g.lineTo(x, y); }
+
+          if (rPx < 28 && c.facing > 0.35) {
+            // Small and well inside the disk: the projected rim is an ellipse.
+            // Its axes and tilt are the singular values / left vectors of
+            // [a b] (closed-form 2×2 SVD); canvas draws it as a true curve.
+            const sumA = (ax + by) / 2;
+            const difA = (ax - by) / 2;
+            const sumB = (ay + bx) / 2;
+            const difB = (ay - bx) / 2;
+            const q1 = Math.hypot(sumA, difB);
+            const q2 = Math.hypot(difA, sumB);
+            const rot = (Math.atan2(sumB, difA) + Math.atan2(difB, sumA)) / 2;
+            g.moveTo(c.x + (q1 + q2) * Math.cos(rot), c.y + (q1 + q2) * Math.sin(rot));
+            g.ellipse(c.x, c.y, q1 + q2, Math.abs(q1 - q2), rot, 0, 2 * Math.PI);
+          } else {
+            // Large, or near the limb: trace the actual circle on the sphere
+            // (all points at angular distance r from the centre), dense
+            // enough to look smooth, and lift the pen where it goes over the
+            // horizon.
+            const center = surfacePoint(lat, lon);
+            const [u, v] = basis(center);
+            const cr = Math.cos(rDeg * D2R);
+            const sr = Math.sin(rDeg * D2R);
+            const segs = Math.min(720, Math.max(48, Math.ceil(rPx * 0.5)));
+            let pen = false;
+            for (let s2 = 0; s2 <= segs; s2++) {
+              const t = (s2 / segs) * 2 * Math.PI;
+              const ct = Math.cos(t);
+              const st = Math.sin(t);
+              q[0] = center[0] * cr + (u[0] * ct + v[0] * st) * sr;
+              q[1] = center[1] * cr + (u[1] * ct + v[1] * st) * sr;
+              q[2] = center[2] * cr + (u[2] * ct + v[2] * st) * sr;
+              p.projectVec(q, qp);
+              if (qp.visible) {
+                if (pen) { g.lineTo(qp.x, qp.y); } else { g.moveTo(qp.x, qp.y); pen = true; }
+              } else {
+                pen = false;
+              }
+            }
           }
           drawn[4 * n] = c.x;
           drawn[4 * n + 1] = c.y;
@@ -531,6 +571,7 @@ export default defineComponent({
           n++;
         }
       }
+      g.lineJoin = "round";
       g.strokeStyle = "rgba(255, 214, 102, 0.62)";
       g.lineWidth = 1;
       g.stroke();
