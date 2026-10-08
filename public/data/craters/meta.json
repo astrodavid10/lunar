@@ -1,0 +1,21 @@
+{
+ "source": "Robbins (2019) JGR Planets 124, doi:10.1029/2018JE005592",
+ "count": 1296796,
+ "large": 6973,
+ "medium": {
+  "count": 76088,
+  "tileDeg": 15,
+  "rows": 12,
+  "cols": 24,
+  "diamScale": 1000,
+  "maxPerTile": 801
+ },
+ "small": {
+  "count": 1213735,
+  "tileDeg": 5,
+  "rows": 36,
+  "cols": 72,
+  "diamScale": 1000,
+  "maxPerTile": 1624
+ }
+}

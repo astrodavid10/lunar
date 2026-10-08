@@ -1,394 +1,500 @@
 <template>
-  <v-app id="app" :style="cssVars">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <div id="main-content">
+  <div id="main-content" :class="{ 'kiosk-ui': kioskMode, attract: attractMode }">
+    <WorldWideTelescope :wwt-namespace="wwtNamespace"></WorldWideTelescope>
 
-      <WorldWideTelescope :wwt-namespace="wwtNamespace"></WorldWideTelescope>
+    <SurfaceOverlay
+      v-if="mapsLoaded"
+      ref="overlay"
+      :sites="visibleSites"
+      :selected-id="selectedSiteId"
+      :show-labels="showLabels"
+      :show-maria="showMaria"
+      :show-craters="showCraters"
+      :subsolar="subsolar"
+      :listen-mode="listenOpen"
+      :profile="profile"
+      :playhead="playhead"
+      :hud-visible="!isLoading && !attractMode && !(isNarrow && dockOpen)"
+      @select="onMarkerSelect"
+      @hover="onMarkerHover"
+      @listen-line="onListenLine"
+    />
 
-      <!-- Loading modal -->
-      <transition name="fade">
-        <div class="modal" id="modal-loading" v-show="isLoading">
-          <div class="container">
-            <div class="spinner"></div>
-            <p>Loading…</p>
-          </div>
+    <!-- Loading / boot error (audit L4, E3) -->
+    <transition name="fade">
+      <div class="modal" id="modal-loading" v-show="isLoading || bootError">
+        <div class="loading-box" v-if="!bootError" role="status">
+          <div class="spinner" aria-hidden="true"></div>
+          <p>Loading the Moon…</p>
         </div>
-      </transition>
+        <div class="boot-error" v-else role="alert">
+          <h2>The Moon maps couldn't be loaded</h2>
+          <p>{{ bootError }}</p>
+          <button v-if="bootRetryable" type="button" class="btn btn-primary" @click="retryBoot">Try again</button>
+          <p v-if="bootRetryInS" class="boot-auto">Trying again automatically in {{ bootRetryInS }} seconds.</p>
+        </div>
+      </div>
+    </transition>
 
-      <!-- Map selector bar (top center) -->
-      <div id="map-controls-container" v-show="!isLoading && planetaryMaps.length > 0">
-        <button class="map-nav-btn" @click="moveLeft" :disabled="isCrossfading" aria-label="Previous map">
-          <i class="fas fa-chevron-left"></i>
+    <template v-if="!isLoading">
+      <!-- Title chip (L6): persistent name of the app + current map -->
+      <button type="button" class="title-chip" @click="openIntro" aria-label="About Moon Maps">
+        <img :src="lmLogo" alt="" aria-hidden="true" />
+        <span class="title-text">
+          <span class="title-name">Moon Maps</span>
+          <span class="title-map">{{ currentLayer?.displayName ?? shortName(currentMapName) }}</span>
+        </span>
+      </button>
+
+      <!-- Layer tabs (L13, L15): named, ≥ 24 px targets -->
+      <nav class="layer-bar" aria-label="Moon maps">
+        <button type="button" class="icon-btn layer-step" aria-label="Previous map" @click="moveLeft">
+          <FontAwesomeIcon icon="chevron-left" />
         </button>
-
-        <div class="map-dots" role="tablist" aria-label="Select map">
+        <div class="layer-tabs" role="group" aria-label="Choose a map">
           <button
-            v-for="(mapName, i) in planetaryMaps"
-            :key="i"
-            class="map-dot"
-            :class="{ active: i === curMapIndex }"
-            :title="shortName(mapName)"
-            :aria-label="shortName(mapName)"
-            :aria-selected="i === curMapIndex"
-            role="tab"
+            v-for="(name, i) in planetaryMaps"
+            :key="name"
+            type="button"
+            class="layer-tab"
+            :aria-pressed="i === curMapIndex"
+            :title="shortName(name)"
             @click="switchToMap(i)"
-          ></button>
+          >
+            {{ layerByName(name)?.tabLabel ?? shortName(name) }}
+          </button>
         </div>
+        <span class="layer-current" aria-hidden="true">{{ currentLayer?.tabLabel ?? shortName(currentMapName) }}</span>
+        <button type="button" class="icon-btn layer-step" aria-label="Next map" @click="moveRight">
+          <FontAwesomeIcon icon="chevron-right" />
+        </button>
+      </nav>
+      <p class="layer-caption" aria-live="polite">
+        <span v-if="!compareOpen">{{ currentLayer?.caption }}</span>
+        <span v-else-if="comparePromptText">{{ comparePromptText }}</span>
+        <span v-else>Drag the slider to blend {{ compareLayer?.tabLabel }} and {{ currentLayer?.tabLabel }}.</span>
+      </p>
 
-        <button class="map-nav-btn" @click="moveRight" :disabled="isCrossfading" aria-label="Next map">
-          <i class="fas fa-chevron-right"></i>
+      <!-- Right-side tools (L15: real buttons with names) -->
+      <div class="tools" role="toolbar" aria-label="Map tools" aria-orientation="vertical">
+        <button type="button" class="icon-btn" aria-label="Zoom in" title="Zoom in" @click="zoomBy(1 / 1.5)">
+          <FontAwesomeIcon icon="magnifying-glass-plus" />
+        </button>
+        <button type="button" class="icon-btn" aria-label="Zoom out" title="Zoom out" @click="zoomBy(1.5)">
+          <FontAwesomeIcon icon="magnifying-glass-minus" />
+        </button>
+        <span class="tools-sep" aria-hidden="true"></span>
+        <button type="button" class="icon-btn" :aria-pressed="compareOpen" aria-label="Compare two maps" title="Compare two maps"
+                :disabled="planetaryMaps.length < 2" @click="toggleCompare">
+          <FontAwesomeIcon icon="adjust" />
+        </button>
+        <div class="overlays-anchor">
+          <button type="button" class="icon-btn" :class="{ 'has-active': overlayCount > 0 }" :aria-expanded="overlaysOpen"
+                  aria-controls="overlays-menu" aria-label="Map overlays" title="Map overlays" @click="overlaysOpen = !overlaysOpen">
+            <FontAwesomeIcon icon="layer-group" />
+            <span v-if="overlayCount" class="badge" aria-hidden="true">{{ overlayCount }}</span>
+          </button>
+          <transition name="rise">
+            <div v-if="overlaysOpen" id="overlays-menu" class="overlays-menu panel" role="group" aria-label="Map overlays"
+                 @keydown.esc.stop="overlaysOpen = false">
+              <button type="button" role="switch" class="overlay-switch" :aria-checked="showMaria" @click="showMaria = !showMaria">
+                <span class="sw" aria-hidden="true"></span>
+                <span class="sw-text"><b>Maria</b><small>Where ancient lava flooded the basins</small></span>
+                <span class="sw-key key-maria" aria-hidden="true"></span>
+              </button>
+              <button type="button" role="switch" class="overlay-switch" :aria-checked="showCraters" @click="showCraters = !showCraters">
+                <span class="sw" aria-hidden="true"></span>
+                <span class="sw-text"><b>Craters</b><small>1.3 million rims, sharper as you zoom in</small></span>
+                <span class="sw-key key-craters" aria-hidden="true"></span>
+              </button>
+              <button type="button" role="switch" class="overlay-switch" :aria-checked="showLabels" @click="showLabels = !showLabels">
+                <span class="sw" aria-hidden="true"></span>
+                <span class="sw-text"><b>Names &amp; grid</b><small>Seas, craters and latitude lines</small></span>
+                <span class="sw-key key-grid" aria-hidden="true"></span>
+              </button>
+              <p class="overlay-credit">
+                Maria: LROC (Nelson et al. 2014). Craters: Robbins (2019) lunar crater database.
+              </p>
+            </div>
+          </transition>
+        </div>
+        <button type="button" class="icon-btn" :aria-pressed="tonightOpen" aria-label="Tonight's Moon: sunlight and phase" title="Tonight's Moon"
+                @click="toggleTonight">
+          <FontAwesomeIcon icon="moon" />
+        </button>
+        <button type="button" class="icon-btn" :aria-pressed="listenOpen" aria-label="Listen to the terrain" title="Listen to the terrain"
+                @click="toggleListen">
+          <FontAwesomeIcon icon="headphones" />
+        </button>
+        <button type="button" class="icon-btn" :aria-pressed="soundOn" :aria-label="soundOn ? 'Turn site sounds off' : 'Turn site sounds on'"
+                :title="soundOn ? 'Site sounds on' : 'Site sounds off'" @click="soundOn = !soundOn">
+          <FontAwesomeIcon :icon="soundOn ? 'volume-high' : 'volume-xmark'" />
+        </button>
+        <span class="tools-sep" aria-hidden="true"></span>
+        <button type="button" class="icon-btn" aria-label="About this map" title="About this map" @click="showLayerInfo = true">
+          <FontAwesomeIcon icon="circle-info" />
+        </button>
+        <button type="button" class="icon-btn" aria-label="Help" title="Help" @click="showHelp = true">
+          <FontAwesomeIcon icon="question-circle" />
+        </button>
+        <button v-if="kioskMode" type="button" class="icon-btn" aria-label="Take this view home" title="Take this view home" @click="openTakeHome">
+          <FontAwesomeIcon icon="qrcode" />
         </button>
       </div>
 
-      <!-- Current map name display -->
-      <transition name="fade">
-        <div id="map-name-display" v-if="!isLoading && currentMapMeta" @click="showLayerInfo = true">
-          {{ currentMapMeta.displayName }}
-        </div>
+      <!-- Bottom-left launchers -->
+      <div class="launchers">
+        <button type="button" class="btn launcher" :aria-pressed="explorePanel === 'sites'" @click="openExplore('sites')">
+          <FontAwesomeIcon icon="rocket" /> Explore
+        </button>
+        <button type="button" class="btn launcher" :aria-pressed="explorePanel === 'tours'" @click="openExplore('tours')">
+          <FontAwesomeIcon icon="route" /> Tours
+        </button>
+        <button v-if="prevMapIndex >= 0 && !compareOpen" type="button" class="icon-btn launcher-icon"
+                :aria-label="`Back to ${shortName(planetaryMaps[prevMapIndex])}`" :title="`Back to ${shortName(planetaryMaps[prevMapIndex])}`"
+                @click="goToPrevious">
+          <FontAwesomeIcon icon="rotate-left" />
+        </button>
+      </div>
+
+      <transition name="rise">
+        <ExplorePanel
+          v-if="explorePanel"
+          :key="explorePanel"
+          :initial-view="explorePanel"
+          :selected-id="selectedSiteId"
+          :visible-programs="visiblePrograms"
+          @close="closeExplore"
+          @select="onCardSelect"
+          @toggle-program="toggleProgram"
+          @tour="startTour"
+          @whole-moon="flyWholeMoon"
+        />
       </transition>
 
-      <!-- Previous map return button (top left) -->
-      <button
-        id="previous-btn"
-        v-show="prevMapIndex >= 0 && !isLoading && !isCrossfading"
-        @click="goToPrevious"
-        title="Return to previous map"
-        aria-label="Return to previous map"
-      >
-        <i class="fas fa-sync-alt"></i>
-      </button>
+      <transition name="rise">
+        <SiteCard
+          v-if="selectedSite && !tour"
+          :key="selectedSite.id"
+          :site="selectedSite"
+          :current-layer-id="currentLayer?.id ?? ''"
+          @close="selectedSiteId = null"
+          @show-layer="switchToLayerId"
+        />
+      </transition>
 
-      <!-- Right-side controls -->
-      <ul id="controls" v-show="!isLoading">
-        <li @click="doZoom(true)" title="Zoom in">
-          <i class="fas fa-search-plus"></i>
-        </li>
-        <li @click="doZoom(false)" title="Zoom out">
-          <i class="fas fa-search-minus"></i>
-        </li>
-        <li
-          @click="toggleCrossfadeSlider"
-          :class="{ 'control-active': showCrossfadeSlider, 'control-disabled': planetaryMaps.length < 2 }"
-          :title="showCrossfadeSlider ? 'Close compare' : 'Compare maps'"
-        >
-          <i class="fas fa-adjust"></i>
-        </li>
-        <li @click="showLayerInfo = true" title="Map information">
-          <i class="fas fa-info-circle"></i>
-        </li>
-        <li @click="showHelp = true" title="Help">
-          <i class="fas fa-question-circle"></i>
-        </li>
-      </ul>
-
-      <!-- Rocket / Areas of interest button (bottom left) -->
-      <button
-        id="rocket-btn"
-        v-show="!isLoading"
-        :class="{ 'rocket-active': showLocations }"
-        @click="showLocations = !showLocations"
-        title="Areas of interest"
-        aria-label="Areas of interest"
-      >
-        <i class="fas fa-rocket"></i>
-      </button>
-
-      <!-- Manual crossfade slider (bottom center) -->
-      <transition name="slide-up">
-        <div id="crossfade-panel" v-if="showCrossfadeSlider">
-          <span class="cf-label">{{ shortName(planetaryMaps[prevMapIndex] ?? '') }}</span>
-          <input
-            type="range"
-            class="opacity-range"
-            min="0"
-            max="100"
-            v-model.number="manualOpacity"
-            @input="applyManualOpacity"
-            aria-label="Map blend"
+      <!-- Bottom-center dock: compare, tonight, listen, tour -->
+      <div class="dock">
+        <transition name="rise">
+          <TourPanel
+            v-if="tour"
+            :tour="tour.def"
+            :index="tour.index"
+            :arrived="tourArrived"
+            @step="stepTour"
+            @exit="exitTour"
           />
-          <span class="cf-label">{{ shortName(planetaryMaps[curMapIndex]) }}</span>
-        </div>
-      </transition>
+        </transition>
 
-      <!-- Areas of interest panel (bottom left) -->
-      <transition name="slide-right">
-        <div id="locations-panel" v-if="showLocations">
-          <div class="panel-header">
-            <h3>Areas of Interest</h3>
-            <button class="panel-close-btn" @click="showLocations = false" aria-label="Close">
-              <i class="fas fa-times"></i>
-            </button>
-          </div>
-          <ul class="locations-list">
-            <li
-              v-for="loc in locations"
-              :key="loc.id"
-              class="location-item"
-              :class="{ 'location-active': selectedLocation?.id === loc.id }"
-              @click="gotoLocation(loc)"
-            >
-              <i class="fas fa-map-marker-alt location-icon"></i>
-              {{ loc.name }}
-            </li>
-          </ul>
-        </div>
-      </transition>
-
-      <!-- Location description popup (bottom center) -->
-      <transition name="fade">
-        <div
-          id="location-description"
-          v-if="selectedLocation && selectedLocation.description"
-          @click="selectedLocation = null"
-        >
-          <strong>{{ selectedLocation.name }}</strong>
-          <p>{{ selectedLocation.description }}</p>
-          <span class="dismiss-hint">Tap to dismiss</span>
-        </div>
-      </transition>
-
-      <!-- Layer info overlay -->
-      <transition name="fade">
-        <div id="layer-info-backdrop" v-if="showLayerInfo" @click="showLayerInfo = false">
-          <div class="layer-info-panel" @click.stop>
-            <button class="panel-close-btn info-close" @click="showLayerInfo = false" aria-label="Close">
-              <i class="fas fa-times"></i>
-            </button>
-            <h3>{{ currentMapMeta?.displayName }}</h3>
-            <p>{{ currentMapMeta?.description }}</p>
-            <img
-              v-if="currentMapMeta?.legendSrc"
-              :src="currentMapMeta.legendSrc"
-              alt="Map legend"
-              class="legend-img"
+        <transition name="rise">
+          <section v-if="compareOpen" class="dock-panel panel compare-panel" aria-label="Compare maps">
+            <label class="cmp-pick">
+              <span class="visually-hidden">Map to compare with</span>
+              <select :value="compareIndex" @change="setCompareIndex(Number(($event.target as HTMLSelectElement).value))">
+                <option v-for="(name, i) in planetaryMaps" :key="name" :value="i" :disabled="i === curMapIndex">
+                  {{ layerByName(name)?.tabLabel ?? shortName(name) }}
+                </option>
+              </select>
+            </label>
+            <input
+              type="range"
+              class="cmp-range"
+              min="0"
+              max="100"
+              v-model.number="manualOpacity"
+              @input="applyManualOpacity"
+              :aria-label="`Blend from ${compareLayer?.tabLabel} to ${currentLayer?.tabLabel}`"
+              :aria-valuetext="`${manualOpacity}% ${currentLayer?.tabLabel}`"
             />
-            <p class="dismiss-hint">Click outside to close</p>
-          </div>
-        </div>
-      </transition>
+            <span class="cmp-label">{{ currentLayer?.tabLabel ?? shortName(currentMapName) }}</span>
+            <button type="button" class="icon-btn" aria-label="Close compare" @click="toggleCompare">
+              <FontAwesomeIcon icon="times" />
+            </button>
+          </section>
+        </transition>
 
-      <!-- Help overlay -->
+        <transition name="rise">
+          <section v-if="tonightOpen && lighting" class="dock-panel panel tonight-panel" aria-label="Tonight's Moon">
+            <div class="tonight-phase">
+              <svg viewBox="-20 -20 40 40" class="phase-icon" aria-hidden="true">
+                <circle r="18" fill="#2a2b31" />
+                <path :d="phasePath" fill="#e8e4da" />
+              </svg>
+              <div>
+                <p class="tonight-name">{{ lighting.phaseName }}</p>
+                <p class="tonight-meta">{{ Math.round(lighting.illuminated * 100) }}% lit · {{ tonightDateLabel }}</p>
+              </div>
+            </div>
+            <div class="tonight-controls">
+              <button type="button" class="icon-btn" :aria-label="tonightPlaying ? 'Pause the lunar month' : 'Play a lunar month'"
+                      @click="toggleTonightPlay">
+                <FontAwesomeIcon :icon="tonightPlaying ? 'pause' : 'play'" />
+              </button>
+              <input
+                type="range"
+                class="tonight-range"
+                min="-15"
+                max="15"
+                step="0.25"
+                v-model.number="tonightOffsetDays"
+                aria-label="Days from today"
+                :aria-valuetext="tonightDateLabel"
+              />
+              <button type="button" class="btn btn-small btn-ghost" @click="tonightOffsetDays = 0">Today</button>
+              <button type="button" class="icon-btn" aria-label="Close tonight's Moon" @click="toggleTonight">
+                <FontAwesomeIcon icon="times" />
+              </button>
+            </div>
+          </section>
+        </transition>
+
+        <transition name="rise">
+          <section v-if="listenOpen" class="dock-panel panel listen-panel" aria-label="Listen to the terrain">
+            <div class="listen-head">
+              <p class="listen-hint" v-if="!profile">
+                Drag a line across the Moon to hear its shape. Higher ground plays a higher note.
+              </p>
+              <div class="listen-chart" v-else>
+                <svg :viewBox="`0 0 ${chart.w} ${chart.h}`" preserveAspectRatio="none" aria-hidden="true">
+                  <path :d="chart.area" class="chart-area" />
+                  <path :d="chart.line" class="chart-line" />
+                  <line v-if="playhead >= 0" :x1="playhead * chart.w" :x2="playhead * chart.w" y1="0" :y2="chart.h" class="chart-head" />
+                </svg>
+                <p class="listen-stats">{{ profileSummary }}</p>
+              </div>
+              <button type="button" class="icon-btn" aria-label="Close listen tool" @click="toggleListen">
+                <FontAwesomeIcon icon="times" />
+              </button>
+            </div>
+            <div class="listen-actions">
+              <button type="button" class="btn btn-small btn-secondary" @click="listenAcrossView">
+                <FontAwesomeIcon icon="arrows-alt" /> Across the view
+              </button>
+              <button v-if="profile" type="button" class="btn btn-small btn-primary" @click="playCurrentProfile">
+                <FontAwesomeIcon icon="play" /> Play again
+              </button>
+            </div>
+            <p class="listen-msg" v-if="listenMessage" role="status">{{ listenMessage }}</p>
+          </section>
+        </transition>
+      </div>
+
+      <!-- Legends: both while comparing (L12) -->
+      <div class="legends" v-if="legends.length && !(isNarrow && dockOpen)">
+        <figure v-for="l in legends" :key="l.src" class="legend">
+          <figcaption>{{ l.label }}</figcaption>
+          <img :src="l.src" :alt="l.alt" />
+        </figure>
+      </div>
+
+      <!-- Attract-loop caption (kiosk) -->
       <transition name="fade">
-        <div id="help-overlay" v-if="showHelp" @click="showHelp = false">
-          <div class="help-box">
-            <h2>Explore the Moon</h2>
-            <div class="help-row">
-              <span class="help-icons">
-                <i class="fas fa-chevron-left"></i>
-                <i class="fas fa-chevron-right"></i>
-              </span>
-              <span>Use the arrows or dot buttons to switch between Moon map types.</span>
-            </div>
-            <div class="help-row">
-              <span class="help-icons"><i class="fas fa-rocket"></i></span>
-              <span>Tap the Rocket to fly to notable craters, rilles, and landing sites.</span>
-            </div>
-            <div class="help-row">
-              <span class="help-icons"><i class="fas fa-arrows-alt"></i></span>
-              <span>Click and drag to pan. Scroll or pinch to zoom.</span>
-            </div>
-            <div class="help-row">
-              <span class="help-icons"><i class="fas fa-adjust"></i></span>
-              <span>Use the Compare button to manually blend two maps with a crossfade slider.</span>
-            </div>
-            <div class="help-row">
-              <span class="help-icons"><i class="fas fa-sync-alt"></i></span>
-              <span>The return button (top left) jumps back to your previously viewed map.</span>
-            </div>
-            <div class="help-row">
-              <span class="help-icons"><i class="fas fa-info-circle"></i></span>
-              <span>Tap the info button or the map name to read about the current map.</span>
-            </div>
-            <p class="dismiss-hint" style="text-align:center; margin-top:1.2rem;">
-              Click anywhere to dismiss
-            </p>
-          </div>
+        <div v-if="attractMode" class="attract-caption" aria-hidden="true">
+          <p class="attract-name" v-if="attractSite">{{ attractSite.name }}</p>
+          <p class="attract-summary" v-if="attractSite">{{ attractSite.summary }}</p>
+          <p class="attract-cta">Touch anywhere to explore the Moon</p>
         </div>
       </transition>
 
-      <!-- Credits -->
-      <div id="credits" v-show="!isLoading">
-        <span>Powered by </span>
-        <a href="https://worldwidetelescope.org" target="_blank" rel="noopener">
-          <img alt="WorldWide Telescope" src="./assets/logo_wwt.png" />
+      <div class="credits">
+        <span>Powered by</span>
+        <a href="https://worldwidetelescope.org" target="_blank" rel="noopener" aria-label="WorldWide Telescope">
+          <img alt="WorldWide Telescope" :src="wwtLogo" />
         </a>
       </div>
+    </template>
 
-    </div>
-  </v-app>
+    <!-- Layer info (focus-managed dialog) -->
+    <transition name="fade">
+      <div class="overlay-backdrop" v-if="showLayerInfo" @click.self="showLayerInfo = false">
+        <div ref="infoDialog" class="dialog panel" role="dialog" aria-modal="true" aria-labelledby="info-title" tabindex="-1"
+             @keydown="dialogKeydown($event, 'showLayerInfo')">
+          <button type="button" class="icon-btn dialog-close" aria-label="Close" @click="showLayerInfo = false">
+            <FontAwesomeIcon icon="times" />
+          </button>
+          <h2 id="info-title">{{ currentLayer?.displayName ?? shortName(currentMapName) }}</h2>
+          <p class="info-caption">{{ currentLayer?.caption }}</p>
+          <p>{{ currentLayer?.description }}</p>
+          <img v-if="currentLayer?.legendSrc" :src="currentLayer.legendSrc" :alt="currentLayer.legendAlt" class="info-legend" />
+          <p class="info-credit" v-if="currentLayer">Credit: {{ currentLayer.credit }}</p>
+        </div>
+      </div>
+    </transition>
+
+    <!-- Help -->
+    <transition name="fade">
+      <div class="overlay-backdrop" v-if="showHelp" @click.self="showHelp = false">
+        <div ref="helpDialog" class="dialog panel" role="dialog" aria-modal="true" aria-labelledby="help-title" tabindex="-1"
+             @keydown="dialogKeydown($event, 'showHelp')">
+          <button type="button" class="icon-btn dialog-close" aria-label="Close help" @click="showHelp = false">
+            <FontAwesomeIcon icon="times" />
+          </button>
+          <h2 id="help-title">How to explore</h2>
+          <dl class="help-list">
+            <div><dt><FontAwesomeIcon icon="arrows-alt" /></dt><dd>Drag to turn the Moon. Scroll, pinch, or use + and − to zoom.</dd></div>
+            <div><dt>← →</dt><dd>Step through the maps with the tabs at the top or the arrow keys.</dd></div>
+            <div><dt><FontAwesomeIcon icon="rocket" /></dt><dd><b>Explore</b> lists every site. Tap one, or a marker on the surface, to fly there.</dd></div>
+            <div><dt><FontAwesomeIcon icon="route" /></dt><dd><b>Tours</b> tell the story of Apollo, the south pole, and the Moon's impacts.</dd></div>
+            <div><dt><FontAwesomeIcon icon="adjust" /></dt><dd><b>Compare</b> blends two maps with a slider.</dd></div>
+            <div><dt><FontAwesomeIcon icon="layer-group" /></dt><dd><b>Overlays</b> outline the dark lava seas (maria), draw 1.3 million crater rims, and label features with a latitude grid. With craters on, the panel at the bottom right counts how crowded the ground is: more craters means older ground.</dd></div>
+            <div><dt><FontAwesomeIcon icon="moon" /></dt><dd><b>Tonight's Moon</b> shows where the Sun is shining today, and lets you play a whole month.</dd></div>
+            <div><dt><FontAwesomeIcon icon="headphones" /></dt><dd><b>Listen</b> turns the height of the ground along a line into sound.</dd></div>
+            <div><dt>Esc</dt><dd>Closes the topmost panel.</dd></div>
+          </dl>
+          <div class="help-legend" aria-label="Marker key">
+            <span class="key key-apollo">Apollo</span>
+            <span class="key key-robotic">Robotic lander</span>
+            <span class="key key-artemis">Artemis IV region</span>
+            <span class="key key-feature">Crater or basin</span>
+          </div>
+        </div>
+      </div>
+    </transition>
+
+    <IntroDialog v-if="showIntro && !isLoading && !attractMode" @start="closeIntro" @tour="startTourFromIntro" />
+
+    <KioskQrModal v-if="qr" :url="qr.url" :title="qr.title" :auto-close-ms="qrAutoCloseMs" @close="qr = null" />
+  </div>
 </template>
 
 <script lang="ts">
-import { defineComponent } from 'vue';
-import { MiniDSBase } from '@cosmicds/vue-toolkit';
-import { WWTControl } from '@wwtelescope/engine';
+import { defineComponent, markRaw } from "vue";
+import { WWTAwareComponent } from "@wwtelescope/engine-pinia";
+import { WWTControl, Imageset } from "@wwtelescope/engine";
 
-interface LayerMeta {
-  wwtName: string;
-  displayName: string;
-  description: string;
-  legendSrc?: string;
-}
+import SurfaceOverlay from "./components/SurfaceOverlay.vue";
+import IntroDialog from "./components/IntroDialog.vue";
+import ExplorePanel from "./components/ExplorePanel.vue";
+import SiteCard from "./components/SiteCard.vue";
+import TourPanel from "./components/TourPanel.vue";
+import KioskQrModal from "./KioskQrModal.vue";
 
-interface LunarLocation {
-  id: string;
-  name: string;
-  raRad: number;
-  decRad: number;
-  zoomDeg: number;
-  description: string;
-}
+import { LAYER_META, LayerMeta, DEFAULT_LAYER_ID, layerById, layerByName, comparePrompt } from "./data/layers";
+import { SITES, Site, Program, PROGRAMS, siteById } from "./data/sites";
+import { Tour, tourById } from "./data/tours";
+import { flyTo, cancelFlight, prefersReducedMotion } from "./flight";
+import { wwtControl } from "./globe";
+import { moonLighting, MoonLighting } from "./ephemeris";
+import { loadElevation, elevationProfile, ProfileSample } from "./elevation";
+import { chime, playProfile, stopProfile } from "./audio";
+import { trapTab, isEditableTarget } from "./a11y";
+import { withTimeout, hasWebGL, describeBootError, scheduleKioskRetry, markBootSucceeded } from "./boot";
+import {
+  createIdleWatcher, installKioskGuards, scheduleDailyReload,
+  KIOSK_IDLE_MS, KIOSK_ATTRACT_DWELL_MS, KIOSK_QR_AUTOCLOSE_MS, KIOSK_RELOAD_HOUR, IdleWatcher,
+} from "./kiosk";
+import { statsInit, statsSessionStart, statsSessionEnd, statsTrack } from "./kioskStats";
+import { boolParam, stringParam } from "./urlParams";
 
-// Metadata for known moon imagesets from moon_maps_v4.wtml.
-// Order here controls the display order of the dot buttons.
-const LAYER_META: LayerMeta[] = [
-  {
-    wwtName: "CGI Moon Kit",
-    displayName: "CGI Moon",
-    description: "A full-color photorealistic map assembled from over 100,000 individual images, composited and color-corrected to represent how the Moon appears to the naked eye.",
-  },
-  {
-    wwtName: "Moon LRO LROC WAC Global Morphology Mosaic 100m v3",
-    displayName: "LRO Wide-Angle Camera",
-    description: "Assembled from 15,000 images acquired by the Wide Angle Camera (WAC) aboard NASA's Lunar Reconnaissance Orbiter between 2009 and 2011. Resolution: ~100 m/pixel.",
-  },
-  {
-    wwtName: "SELENE Kaguya TC Ortho Global Mosaic",
-    displayName: "SELENE Kaguya Terrain",
-    description: "Built from images captured by Japan's SELENE (Kaguya) Terrain Camera — one of the highest-resolution global lunar mosaics ever produced, at ~10 m/pixel.",
-  },
-  {
-    wwtName: "Moon LRO LOLA Color Shaded Relief 388m v4",
-    displayName: "LOLA Elevation (Color)",
-    description: "A colorized digital elevation model derived from 2011 altimetry data collected by the Lunar Orbiter Laser Altimeter (LOLA) aboard NASA's Lunar Reconnaissance Orbiter. Resolution: ~388 m/pixel.",
-    legendSrc: "./assets/lola-legend.png",
-  },
-  {
-    wwtName: "Moon LROC WAC GLD100 ColorShade 79S79N 118m v1",
-    displayName: "LROC ColorShade Elevation",
-    description: "A colorized terrain map from the GLD100 global topographic model: blue = low elevation, white = mid elevation, black = high elevation (darker = more extreme).",
-    legendSrc: "./assets/colorshade-legend.png",
-  },
-  {
-    wwtName: "Moon Clementine UVVIS Warped Color Ratio Mosaic 200m v1",
-    displayName: "Clementine Mineral Map",
-    description: "Captured at three wavelengths (415 nm, 750 nm, 1000 nm): red indicates low titanium or high glass content, green shows iron abundance, and blue highlights high-titanium or high-albedo regions. Resolution: ~200 m/pixel.",
-  },
-  {
-    wwtName: "Unified Geologic Map of the Moon",
-    displayName: "Unified Geologic Map",
-    description: "A composite of six regional geologic maps, color-coded to distinguish maria (ancient lava plains), impact craters, and highland terrain types across the entire lunar surface.",
-  },
-];
-
-const LOCATIONS: LunarLocation[] = [
-  {
-    id: "fullmoon",
-    name: "Full Moon View",
-    raRad: 0,
-    decRad: 0,
-    zoomDeg: 160,
-    description: "",
-  },
-  {
-    id: "tycho",
-    name: "Tycho Crater",
-    raRad: 0.1961802465497132,
-    decRad: -0.7570596929102873,
-    zoomDeg: 5,
-    description: "One of the Moon's youngest and most prominent craters — 53 miles wide and 3 miles deep — formed ~108 million years ago. Bright rays extend nearly 1,000 miles across the surface, and a central peak over a mile high rises from an impact-melt floor.",
-  },
-  {
-    id: "messier",
-    name: "Messier Crater",
-    raRad: 5.45751724,
-    decRad: -0.034482756,
-    zoomDeg: 2,
-    description: "A small oval crater in the Sea of Fertility, shaped by a low-angle asteroid impact that skipped off the surface and formed a second crater (Messier A) to the west.",
-  },
-  {
-    id: "vallis-schroteri",
-    name: "Vallis Schröteri",
-    raRad: 0.86079639,
-    decRad: 0.43196899,
-    zoomDeg: 3,
-    description: "The largest sinuous rille on the Moon — a meandering channel over 125 miles long, likely formed from ancient lava flows originating at the Cobra Head volcanic vent near Herodotus Crater.",
-  },
-  {
-    id: "jackson",
-    name: "Jackson Crater",
-    raRad: 2.84925,
-    decRad: 0.383972,
-    zoomDeg: 4,
-    description: "A large far-side crater whose floor is blanketed with impact melt that cooled, shrank, and cracked — creating a dramatically fractured surface. Jackson also features a spectacular central peak complex.",
-  },
-  {
-    id: "shackleton",
-    name: "Shackleton Crater",
-    raRad: 4.0404372,
-    decRad: -1.563815,
-    zoomDeg: 2,
-    description: "Located near the lunar south pole, Shackleton's rim sits in near-permanent sunlight while its floor remains in eternal shadow. Possible water ice at its base makes it a prime target for future crewed lunar missions.",
-  },
-  {
-    id: "apollo15",
-    name: "Apollo 15 (1971)",
-    raRad: 6.2220988,
-    decRad: 0.45954519,
-    zoomDeg: 3,
-    description: "Astronauts in 1971 explored the Apennine Mountains (over 3 miles high) and Hadley Rille, a sinuous volcanic channel. The highlands here expose ancient crustal material blasted up by giant impacts billions of years ago.",
-  },
-  {
-    id: "apollo16",
-    name: "Apollo 16 (1972)",
-    raRad: 6.014,
-    decRad: -0.157,
-    zoomDeg: 3,
-    description: "The fifth crewed lunar landing in April 1972 targeted the rugged Descartes highland region. Its geological diversity — including high-albedo patches on the crater rim — yielded some of the most scientifically important samples of the Apollo program.",
-  },
-  {
-    id: "apollo17",
-    name: "Apollo 17 (1972)",
-    raRad: 5.745,
-    decRad: 0.35,
-    zoomDeg: 3,
-    description: "The final Apollo mission (December 1972) landed in Taurus-Littrow valley, chosen to sample both ancient highland material and younger volcanic deposits in one location. It remains the last time humans walked on the Moon.",
-  },
-];
+import lmLogo from "./assets/LM-12_w.svg";
+import wwtLogo from "./assets/logo_wwt.png";
 
 const MOON_WTML_URL = "https://web.wwtassets.org/kiosk/2022/moon/moon_maps_v4.wtml";
-const DEFAULT_MAP_NAME = "Moon LRO LROC WAC Global Morphology Mosaic 100m v3";
-const CROSSFADE_STEPS = 30;
-const CROSSFADE_DURATION_MS = 700;
+const CROSSFADE_MS = 700;
+// Whole-disk view. WWT's zoom is a vertical field of view, so on portrait
+// screens it has to grow for the disk to fit the width.
+function wholeMoon(): { lat: number; lon: number; zoomDeg: number } {
+  const w = window.innerWidth || 1;
+  const h = window.innerHeight || 1;
+  return { lat: 0, lon: 0, zoomDeg: Math.min(330, 118 * h / Math.min(w, h)) };
+}
+// Sites the kiosk attract loop cycles through, each shown on its own best map.
+const ATTRACT_SITES = ["tycho", "apollo11", "copernicus", "apollo15", "orientale", "apollo17", "aristarchus", "change4", "shackleton", "jackson", "apollo16", "spa"];
+
+interface ActiveTour { def: Tour; index: number }
 
 export default defineComponent({
   name: "LunarViewer",
 
-  extends: MiniDSBase,
+  extends: WWTAwareComponent,
+
+  // eslint-disable-next-line @typescript-eslint/naming-convention -- PascalCase component registration
+  components: { SurfaceOverlay, IntroDialog, ExplorePanel, SiteCard, TourPanel, KioskQrModal },
 
   props: {
-    wwtNamespace: {
-      type: String,
-      required: true,
-    },
+    wwtNamespace: { type: String, required: true },
+    publicUrl: { type: String, default: "" },
   },
 
   data() {
     return {
+      lmLogo,
+      wwtLogo,
+      layerByName,
+      qrAutoCloseMs: KIOSK_QR_AUTOCLOSE_MS,
+
+      // Boot
       mapsLoaded: false,
       positionSet: false,
+      bootError: "",
+      bootRetryable: true,
+      bootRetryInS: 0,
+
+      // Maps
       planetaryMaps: [] as string[],
       curMapIndex: 0,
       prevMapIndex: -1,
       isCrossfading: false,
-      crossfadeTimer: null as ReturnType<typeof setInterval> | null,
-      showLayerInfo: false,
-      showCrossfadeSlider: false,
-      showLocations: false,
-      showHelp: false,
+      crossfadeRaf: 0,
+      compareOpen: false,
+      compareIndex: -1,
       manualOpacity: 100,
-      selectedLocation: null as LunarLocation | null,
-      enRoute: false,
+
+      // Panels
+      showIntro: !boolParam("nointro"),
+      introDrift: true,
+      showHelp: false,
+      showLayerInfo: false,
+      explorePanel: null as null | "sites" | "tours",
+      lastFocus: null as HTMLElement | null,
+
+      // Sites
+      selectedSiteId: null as string | null,
+      visiblePrograms: PROGRAMS.map(p => p.id) as Program[],
+      showLabels: boolParam("labels"),
+      showMaria: boolParam("maria"),
+      showCraters: boolParam("craters"),
+      overlaysOpen: false,
+      soundOn: false,
+
+      // Tours
+      tour: null as ActiveTour | null,
+      tourArrived: false,
+
+      // Tonight (L20)
+      tonightOpen: boolParam("tonight"),
+      tonightOffsetDays: 0,
+      tonightPlaying: false,
+      tonightRaf: 0,
+      nowMs: Date.now(),
+
+      // Listen (L18)
+      listenOpen: false,
+      profile: null as ProfileSample[] | null,
+      playhead: -1,
+      listenMessage: "",
+
+      // Kiosk (L10)
+      kioskMode: boolParam("kiosk"),
+      attractMode: false,
+      attractIndex: 0,
+      attractTimer: 0,
+      attractSiteId: null as string | null,
+      qr: null as null | { url: string; title: string },
+      idle: null as IdleWatcher | null,
+      kioskCleanup: [] as (() => void)[],
+
+      isNarrow: window.innerWidth <= 640,
     };
   },
 
@@ -396,285 +502,665 @@ export default defineComponent({
     isLoading(): boolean {
       return !(this.mapsLoaded && this.positionSet);
     },
-
-    currentMapMeta(): LayerMeta | undefined {
-      const name = this.planetaryMaps[this.curMapIndex];
-      return LAYER_META.find(m => m.wwtName === name);
+    currentMapName(): string {
+      return this.planetaryMaps[this.curMapIndex] ?? "";
     },
-
-    locations(): LunarLocation[] {
-      return LOCATIONS;
+    currentLayer(): LayerMeta | undefined {
+      return layerByName(this.currentMapName);
     },
-
-    cssVars() {
-      return {
-        '--color-default': '#070021cc',
-        '--app-content-height': '100%',
+    compareLayer(): LayerMeta | undefined {
+      return this.compareIndex >= 0 ? layerByName(this.planetaryMaps[this.compareIndex]) : undefined;
+    },
+    comparePromptText(): string | undefined {
+      if (!this.currentLayer || !this.compareLayer) { return undefined; }
+      return comparePrompt(this.currentLayer.id, this.compareLayer.id);
+    },
+    legends(): { src: string; alt: string; label: string }[] {
+      const out: { src: string; alt: string; label: string }[] = [];
+      const add = (l: LayerMeta | undefined): void => {
+        if (l?.legendSrc) { out.push({ src: l.legendSrc, alt: l.legendAlt ?? "", label: l.tabLabel }); }
       };
+      if (this.compareOpen) { add(this.compareLayer); }
+      add(this.currentLayer);
+      return out;
+    },
+    visibleSites(): Site[] {
+      return SITES.filter(s => this.visiblePrograms.includes(s.program) || s.id === this.selectedSiteId);
+    },
+    selectedSite(): Site | undefined {
+      return siteById(this.selectedSiteId);
+    },
+    attractSite(): Site | undefined {
+      return siteById(this.attractSiteId);
+    },
+    overlayCount(): number {
+      return Number(this.showLabels) + Number(this.showMaria) + Number(this.showCraters);
+    },
+    dockOpen(): boolean {
+      return !!this.tour || this.compareOpen || this.tonightOpen || this.listenOpen;
+    },
+
+    // ── Tonight ──
+    tonightDate(): Date {
+      return new Date(this.nowMs + this.tonightOffsetDays * 86400000);
+    },
+    lighting(): MoonLighting | null {
+      return this.tonightOpen ? moonLighting(this.tonightDate) : null;
+    },
+    subsolar(): { lat: number; lon: number } | null {
+      return this.lighting ? { lat: this.lighting.subsolarLat, lon: this.lighting.subsolarLon } : null;
+    },
+    tonightDateLabel(): string {
+      const d = this.tonightDate;
+      const day = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+      if (Math.abs(this.tonightOffsetDays) < 0.01) { return `Today, ${day}`; }
+      return day;
+    },
+    /** Phase glyph as seen from Earth (lit limb on the right while waxing). */
+    phasePath(): string {
+      const l = this.lighting;
+      if (!l) { return ""; }
+      const r = 18;
+      const k = l.illuminated;
+      const x = r * (1 - 2 * k); // terminator ellipse half-width (signed)
+      const sweepOuter = l.waxing ? 1 : 0;
+      const sweepInner = (x > 0) === l.waxing ? 0 : 1;
+      return `M0,${-r} A${r},${r} 0 0 ${sweepOuter} 0,${r} A${Math.abs(x)},${r} 0 0 ${sweepInner} 0,${-r} Z`;
+    },
+
+    // ── Listen ──
+    chart(): { w: number; h: number; line: string; area: string } {
+      const w = 300;
+      const h = 56;
+      const p = this.profile;
+      if (!p || p.length < 2) { return { w, h, line: "", area: "" }; }
+      const lo = Math.min(...p.map(s => s.elevation));
+      const hi = Math.max(...p.map(s => s.elevation));
+      const span = Math.max(200, hi - lo);
+      const pts = p.map((s, i) => [(i / (p.length - 1)) * w, h - 4 - ((s.elevation - lo) / span) * (h - 8)]);
+      const line = pts.map(([x, y], i) => `${i ? "L" : "M"}${x.toFixed(1)},${y.toFixed(1)}`).join("");
+      return { w, h, line, area: `${line}L${w},${h}L0,${h}Z` };
+    },
+    profileSummary(): string {
+      const p = this.profile;
+      if (!p || p.length < 2) { return ""; }
+      const lo = Math.min(...p.map(s => s.elevation));
+      const hi = Math.max(...p.map(s => s.elevation));
+      const km = p[p.length - 1].km;
+      return `${Math.round(km).toLocaleString()} km long · ${((hi - lo) / 1000).toFixed(1)} km from lowest to highest point`;
     },
   },
 
+  watch: {
+    // Keep the URL shareable: ?map=…&site=… (L10 deep links).
+    curMapIndex() { this.syncUrl(); },
+    selectedSiteId() { this.syncUrl(); },
+    showMaria() { this.syncUrl(); },
+    showCraters() { this.syncUrl(); },
+  },
+
+  mounted() {
+    window.addEventListener("keydown", this.onKeyDown);
+    window.addEventListener("resize", this.onResize);
+    if (this.kioskMode) { this.setupKiosk(); }
+    this.boot();
+  },
+
+  unmounted() {
+    window.removeEventListener("keydown", this.onKeyDown);
+    window.removeEventListener("resize", this.onResize);
+    cancelAnimationFrame(this.crossfadeRaf);
+    cancelAnimationFrame(this.tonightRaf);
+    window.clearTimeout(this.attractTimer);
+    this.idle?.stop();
+    this.kioskCleanup.forEach(fn => fn());
+    stopProfile();
+  },
+
   methods: {
-    // Returns a human-friendly short name for any WWT imageset name.
     shortName(wwtName: string): string {
-      const meta = LAYER_META.find(m => m.wwtName === wwtName);
-      if (meta) return meta.displayName;
-      // Fallback: strip "Moon " prefix and truncate
-      return wwtName.replace(/^Moon\s+/i, '').split(' ').slice(0, 4).join(' ');
+      const meta = layerByName(wwtName);
+      if (meta) { return meta.displayName; }
+      return wwtName.replace(/^Moon\s+/i, "").split(" ").slice(0, 4).join(" ");
     },
 
-    async initialize(): Promise<void> {
-      // Apply basic WWT settings suitable for planet viewing
-      this.applySetting(["showConstellationBoundries", false]); // typo in WWT is intentional
-      this.applySetting(["showConstellationFigures", false]);
-      this.applySetting(["showCrosshairs", false]);
-      this.applySetting(["actualPlanetScale", true]);
-      this.applySetting(["solarSystemCosmos", false]);
-      this.applySetting(["solarSystemStars", false]);
-      this.setClockSync(false);
-
-      // Load the moon imageset collection
-      await this.loadImageCollection({
-        url: MOON_WTML_URL,
-        loadChildFolders: true,
-      });
-
-      // Collect moon imagesets from WWT's registry
-      const available = WWTControl.getImageSets().filter(
-        img => img.get_referenceFrame() === "Moon" && img.get_name() !== "Moon"
-      );
-
-      // Order by LAYER_META first to control display order, then append any extras
-      const ordered: string[] = [];
-      for (const meta of LAYER_META) {
-        if (available.some(img => img.get_name() === meta.wwtName)) {
-          ordered.push(meta.wwtName);
-        }
-      }
-      for (const img of available) {
-        const name = img.get_name();
-        if (name && !ordered.includes(name)) {
-          ordered.push(name);
-        }
-      }
-      this.planetaryMaps = ordered;
-
-      if (this.planetaryMaps.length === 0) {
-        console.warn("LunarViewer: no Moon imagesets found after loading WTML");
-        this.mapsLoaded = true;
-        this.positionSet = true;
+    // ── Boot (L4 / E3) ─────────────────────────────────────────────────────
+    async boot(): Promise<void> {
+      if (!hasWebGL()) {
+        this.bootError = "This browser can't display WebGL graphics, which WorldWide Telescope needs. "
+          + "Try an up-to-date version of Chrome, Edge, Firefox or Safari.";
+        this.bootRetryable = false;
         return;
       }
+      try {
+        await withTimeout(this.waitForReady(), "Starting WorldWide Telescope", 30_000);
 
-      // Prefer the standard WAC mosaic as default, fall back to first available
-      const defaultIdx = this.planetaryMaps.indexOf(DEFAULT_MAP_NAME);
-      this.curMapIndex = defaultIdx >= 0 ? defaultIdx : 0;
+        this.applySetting(["showConstellationBoundries", false]); // the engine's own spelling
+        this.applySetting(["showConstellationFigures", false]);
+        this.applySetting(["showCrosshairs", false]);
+        this.applySetting(["actualPlanetScale", true]);
+        this.applySetting(["solarSystemCosmos", false]);
+        this.applySetting(["solarSystemStars", false]);
+        this.setClockSync(false);
 
-      const defaultName = this.planetaryMaps[this.curMapIndex];
-      const defaultImg = available.find(img => img.get_name() === defaultName);
+        await withTimeout(this.loadImageCollection({ url: MOON_WTML_URL, loadChildFolders: true }), "Loading the Moon maps");
 
-      if (defaultImg) {
-        // setupForImageset switches WWT into planet mode for the Moon
-        this.setupForImageset({ foreground: defaultImg, background: defaultImg });
-      } else {
-        this.setBackgroundImageByName(defaultName);
-        this.setForegroundImageByName(defaultName);
+        const available = WWTControl.getImageSets().filter(
+          img => img.get_referenceFrame() === "Moon" && img.get_name() !== "Moon",
+        );
+        const ordered: string[] = [];
+        for (const meta of LAYER_META) {
+          if (available.some(img => img.get_name() === meta.wwtName)) { ordered.push(meta.wwtName); }
+        }
+        for (const img of available) {
+          const name = img.get_name();
+          if (name && !ordered.includes(name)) { ordered.push(name); }
+        }
+        if (ordered.length === 0) {
+          throw new Error("The Moon map catalog loaded, but it contained no Moon maps.");
+        }
+        this.planetaryMaps = ordered;
+
+        const wanted = layerById(stringParam("map")) ?? layerById(DEFAULT_LAYER_ID);
+        const idx = wanted ? ordered.indexOf(wanted.wwtName) : -1;
+        this.curMapIndex = idx >= 0 ? idx : 0;
+        const startImg = available.find(img => img.get_name() === this.currentMapName) as Imageset;
+        // setupForImageset switches WWT into planet mode for the Moon.
+        this.setupForImageset({ foreground: startImg, background: startImg });
+        this.setForegroundOpacity(100);
+
+        // Park the camera small and turned away; the intro drifts it toward the near side (L6).
+        const deepSite = siteById(stringParam("site"));
+        const deepTour = tourById(stringParam("tour"));
+        const startDrift = this.showIntro && !deepSite && !deepTour && !prefersReducedMotion();
+        await flyTo(startDrift ? { lat: 12, lon: -75, zoomDeg: wholeMoon().zoomDeg * 2.2, instant: true } : { ...wholeMoon(), instant: true });
+
+        this.mapsLoaded = true;
+        this.positionSet = true;
+        markBootSucceeded();
+
+        if (startDrift) {
+          flyTo({ ...wholeMoon(), durationMs: 9000, noRise: true });
+        }
+        if (deepTour) {
+          this.showIntro = false;
+          this.startTour(deepTour.id);
+        } else if (deepSite) {
+          this.showIntro = false;
+          this.gotoSite(deepSite, { switchLayer: !stringParam("map") });
+        }
+
+        // The elevation grid is only needed by the HUD and Listen; fetch it
+        // after the first tiles have had the network to themselves.
+        window.setTimeout(() => { loadElevation(); }, 2500);
+      } catch (err) {
+        console.error("[lunar] startup failed", err);
+        this.bootError = describeBootError(err);
+        if (this.kioskMode) {
+          this.bootRetryInS = Math.round(scheduleKioskRetry() / 1000);
+        }
       }
-      this.setForegroundOpacity(100);
-
-      // Start at a full-disk view
-      await this.gotoRADecZoom({ raRad: 0, decRad: 0, zoomDeg: 160, instant: true });
-
-      this.mapsLoaded = true;
-      this.positionSet = true;
     },
 
+    retryBoot(): void {
+      window.location.reload();
+    },
+
+    // ── Map switching ──────────────────────────────────────────────────────
     moveLeft(): void {
-      if (this.isCrossfading || this.planetaryMaps.length === 0) return;
-      const newIndex = this.curMapIndex === 0
-        ? this.planetaryMaps.length - 1
-        : this.curMapIndex - 1;
-      this.switchToMap(newIndex);
+      const n = this.planetaryMaps.length;
+      if (n === 0) { return; }
+      this.switchToMap((this.curMapIndex - 1 + n) % n);
     },
 
     moveRight(): void {
-      if (this.isCrossfading || this.planetaryMaps.length === 0) return;
-      const newIndex = this.curMapIndex === this.planetaryMaps.length - 1
-        ? 0
-        : this.curMapIndex + 1;
-      this.switchToMap(newIndex);
+      const n = this.planetaryMaps.length;
+      if (n === 0) { return; }
+      this.switchToMap((this.curMapIndex + 1) % n);
+    },
+
+    switchToLayerId(id: string | undefined): void {
+      const meta = layerById(id);
+      const i = meta ? this.planetaryMaps.indexOf(meta.wwtName) : -1;
+      if (i >= 0) { this.switchToMap(i); }
     },
 
     switchToMap(newIndex: number): void {
-      if (newIndex === this.curMapIndex || this.isCrossfading) return;
-
+      if (newIndex === this.curMapIndex || newIndex < 0 || newIndex >= this.planetaryMaps.length) { return; }
       const newName = this.planetaryMaps[newIndex];
+
+      // If a fade is mid-flight, land it before starting the next one.
+      if (this.isCrossfading) { this.finishCrossfade(this.currentMapName); }
+
       this.prevMapIndex = this.curMapIndex;
       this.curMapIndex = newIndex;
-      this.showLayerInfo = false;
 
-      // If the manual crossfade slider is open, just update the foreground
-      // so the slider continues to blend old vs new
-      if (this.showCrossfadeSlider) {
-        const prevName = this.planetaryMaps[this.prevMapIndex];
-        this.setBackgroundImageByName(prevName);
+      // Compare open: the new map becomes the slider's right-hand side. If it
+      // was the compare map, swap so the two sides stay different.
+      if (this.compareOpen) {
+        if (this.compareIndex === newIndex) { this.compareIndex = this.prevMapIndex; }
+        this.setBackgroundImageByName(this.planetaryMaps[this.compareIndex]);
         this.setForegroundImageByName(newName);
         this.setForegroundOpacity(this.manualOpacity);
         return;
       }
 
-      // Auto crossfade: set new map as foreground at opacity 0, animate to 100
+      if (prefersReducedMotion()) {
+        this.finishCrossfade(newName);
+        return;
+      }
+
       this.setForegroundImageByName(newName);
       this.setForegroundOpacity(0);
       this.isCrossfading = true;
-
-      if (this.crossfadeTimer !== null) {
-        clearInterval(this.crossfadeTimer);
-        this.crossfadeTimer = null;
-      }
-
-      const intervalMs = CROSSFADE_DURATION_MS / CROSSFADE_STEPS;
-      let step = 0;
-
-      this.crossfadeTimer = setInterval(() => {
-        step++;
-        const opacity = Math.round((step / CROSSFADE_STEPS) * 100);
-        this.setForegroundOpacity(Math.min(opacity, 100));
-
-        if (step >= CROSSFADE_STEPS) {
-          clearInterval(this.crossfadeTimer!);
-          this.crossfadeTimer = null;
-          // Promote foreground → background and reset
-          this.setBackgroundImageByName(newName);
-          this.setForegroundImageByName(newName);
-          this.setForegroundOpacity(100);
-          this.isCrossfading = false;
+      const start = performance.now();
+      const step = (): void => {
+        const t = Math.min(1, (performance.now() - start) / CROSSFADE_MS);
+        const eased = t * t * (3 - 2 * t);
+        this.setForegroundOpacity(Math.round(eased * 100));
+        if (t < 1) {
+          this.crossfadeRaf = requestAnimationFrame(step);
+        } else {
+          this.finishCrossfade(newName);
         }
-      }, intervalMs);
+      };
+      cancelAnimationFrame(this.crossfadeRaf);
+      this.crossfadeRaf = requestAnimationFrame(step);
+    },
+
+    finishCrossfade(name: string): void {
+      cancelAnimationFrame(this.crossfadeRaf);
+      this.setBackgroundImageByName(name);
+      this.setForegroundImageByName(name);
+      this.setForegroundOpacity(100);
+      this.isCrossfading = false;
     },
 
     goToPrevious(): void {
-      if (this.prevMapIndex < 0) return;
-      this.switchToMap(this.prevMapIndex);
+      if (this.prevMapIndex >= 0) { this.switchToMap(this.prevMapIndex); }
     },
 
-    // Toggle the manual crossfade slider.
-    // When opened: background = compare map, foreground = current map.
-    // Compare map is the previously viewed map, or an adjacent one if none yet.
-    // When closed: restore background = current map.
-    toggleCrossfadeSlider(): void {
-      if (this.isCrossfading || this.planetaryMaps.length < 2) return;
-
-      if (!this.showCrossfadeSlider) {
-        // Pick the compare index: previous map if available, else the adjacent one
-        const compareIndex = this.prevMapIndex >= 0
+    // ── Compare (L12) ──────────────────────────────────────────────────────
+    toggleCompare(): void {
+      if (this.planetaryMaps.length < 2) { return; }
+      if (this.isCrossfading) { this.finishCrossfade(this.currentMapName); }
+      if (!this.compareOpen) {
+        const n = this.planetaryMaps.length;
+        const idx = this.prevMapIndex >= 0 && this.prevMapIndex !== this.curMapIndex
           ? this.prevMapIndex
-          : (this.curMapIndex === 0 ? 1 : this.curMapIndex - 1);
-
-        const compareName = this.planetaryMaps[compareIndex];
-        const curName     = this.planetaryMaps[this.curMapIndex];
-
-        this.prevMapIndex = compareIndex; // so the label updates
-        this.setBackgroundImageByName(compareName);
-        this.setForegroundImageByName(curName);
-        this.manualOpacity = 100;
-        this.setForegroundOpacity(100);
-        this.showCrossfadeSlider = true;
+          : (this.curMapIndex + n - 1) % n;
+        this.compareIndex = idx;
+        this.manualOpacity = 50;
+        this.setBackgroundImageByName(this.planetaryMaps[idx]);
+        this.setForegroundImageByName(this.currentMapName);
+        this.setForegroundOpacity(this.manualOpacity);
+        this.compareOpen = true;
       } else {
-        // Restore: both BG and FG = current map at full opacity
-        const curName = this.planetaryMaps[this.curMapIndex];
-        this.setBackgroundImageByName(curName);
-        this.setForegroundImageByName(curName);
-        this.setForegroundOpacity(100);
-        this.showCrossfadeSlider = false;
+        this.compareOpen = false;
+        this.finishCrossfade(this.currentMapName);
       }
+    },
+
+    setCompareIndex(i: number): void {
+      if (i === this.curMapIndex) { return; }
+      this.compareIndex = i;
+      this.setBackgroundImageByName(this.planetaryMaps[i]);
+      this.setForegroundOpacity(this.manualOpacity);
     },
 
     applyManualOpacity(): void {
       this.setForegroundOpacity(this.manualOpacity);
     },
 
-    gotoLocation(loc: LunarLocation): void {
-      this.showLocations = false;
-      this.enRoute = true;
-      this.selectedLocation = loc.description ? loc : null;
+    // ── Camera ─────────────────────────────────────────────────────────────
+    zoomBy(factor: number): void {
+      const ctl = wwtControl() as unknown as { renderContext: { targetCamera: { zoom: number } } } | null;
+      if (!ctl) { return; }
+      cancelFlight();
+      const z = ctl.renderContext.targetCamera.zoom * factor;
+      // The engine eases the view toward the target camera on its own.
+      ctl.renderContext.targetCamera.zoom = Math.max(0.05, Math.min(200, z));
+    },
 
-      this.gotoRADecZoom({
-        raRad: loc.raRad,
-        decRad: loc.decRad,
-        zoomDeg: loc.zoomDeg,
-        instant: false,
-      }).then(() => {
-        this.enRoute = false;
-        if (loc.description) {
-          this.selectedLocation = loc;
-        }
+    flyWholeMoon(): void {
+      this.selectedSiteId = null;
+      flyTo(wholeMoon());
+    },
+
+    // ── Sites ──────────────────────────────────────────────────────────────
+    gotoSite(site: Site, opts: { switchLayer?: boolean; zoomDeg?: number; lat?: number; lon?: number } = {}): Promise<unknown> {
+      this.selectedSiteId = site.id;
+      const layer = opts.switchLayer ? site.layer : undefined;
+      return flyTo({
+        lat: opts.lat ?? site.lat,
+        lon: opts.lon ?? site.lon,
+        zoomDeg: opts.zoomDeg ?? site.zoomDeg,
+        // L8: crossfade the map mid-flight when the stop has a preferred layer.
+        onMidpoint: layer ? () => this.switchToLayerId(layer) : undefined,
       });
     },
 
-    doZoom(zoomIn: boolean): void {
-      const factor = zoomIn ? 1 / 1.3 : 1.3;
-      const newZoom = Math.max(0.25, Math.min(160, this.wwtZoomDeg * factor));
-      this.gotoRADecZoom({
-        raRad: this.wwtRARad,
-        decRad: this.wwtDecRad,
-        zoomDeg: newZoom,
-        instant: true,
+    onMarkerSelect(site: Site): void {
+      if (this.tour) { this.exitTour(); }
+      if (this.kioskMode) { statsTrack("select", site.name); }
+      this.gotoSite(site);
+    },
+
+    onCardSelect(site: Site): void {
+      if (this.isNarrow) { this.explorePanel = null; }
+      this.onMarkerSelect(site);
+    },
+
+    onMarkerHover(site: Site | null): void {
+      if (site && this.soundOn) { chime(site.program); }
+    },
+
+    toggleProgram(p: Program): void {
+      const i = this.visiblePrograms.indexOf(p);
+      if (i >= 0) { this.visiblePrograms.splice(i, 1); } else { this.visiblePrograms.push(p); }
+    },
+
+    openExplore(view: "sites" | "tours"): void {
+      if (this.explorePanel === view) { this.closeExplore(); return; }
+      this.lastFocus = document.activeElement as HTMLElement | null;
+      this.explorePanel = view;
+    },
+
+    closeExplore(): void {
+      this.explorePanel = null;
+      this.lastFocus?.focus?.();
+      this.lastFocus = null;
+    },
+
+    // ── Tours (L9) ─────────────────────────────────────────────────────────
+    startTour(id: string): void {
+      const def = tourById(id);
+      if (!def) { return; }
+      this.explorePanel = null;
+      this.listenOpen = false;
+      if (this.compareOpen) { this.toggleCompare(); }
+      this.tour = { def: markRaw(def), index: 0 };
+      this.goToTourStop();
+    },
+
+    startTourFromIntro(id: string): void {
+      this.showIntro = false;
+      this.startTour(id);
+    },
+
+    stepTour(delta: number): void {
+      if (!this.tour) { return; }
+      const next = this.tour.index + delta;
+      if (next < 0 || next >= this.tour.def.stops.length) { return; }
+      this.tour.index = next;
+      this.goToTourStop();
+    },
+
+    async goToTourStop(): Promise<void> {
+      if (!this.tour) { return; }
+      const tour = this.tour;
+      const stop = tour.def.stops[tour.index];
+      const site = siteById(stop.siteId);
+      if (!site) { return; }
+      this.tourArrived = false;
+      this.selectedSiteId = site.id;
+      await flyTo({
+        lat: stop.lat ?? site.lat,
+        lon: stop.lon ?? site.lon,
+        zoomDeg: stop.zoomDeg ?? site.zoomDeg,
+        onMidpoint: () => this.switchToLayerId(stop.layer),
       });
+      if (this.tour === tour) { this.tourArrived = true; }
+    },
+
+    exitTour(): void {
+      this.tour = null;
+      this.tourArrived = false;
+    },
+
+    // ── Tonight's Moon (L20) ───────────────────────────────────────────────
+    toggleTonight(): void {
+      this.tonightOpen = !this.tonightOpen;
+      this.stopTonightPlay();
+      if (this.tonightOpen) {
+        this.nowMs = Date.now();
+        this.tonightOffsetDays = 0;
+        // Face the Moon the way we see it from Earth.
+        if (!this.tour) { flyTo(wholeMoon()); }
+      }
+    },
+
+    toggleTonightPlay(): void {
+      if (this.tonightPlaying) { this.stopTonightPlay(); return; }
+      this.tonightPlaying = true;
+      let last = performance.now();
+      const tick = (now: number): void => {
+        if (!this.tonightPlaying) { return; }
+        // About 15 seconds per lunar month.
+        const days = ((now - last) / 1000) * 2;
+        last = now;
+        let next = this.tonightOffsetDays + days;
+        if (next > 15) { next -= 30; }
+        this.tonightOffsetDays = Math.round(next * 100) / 100;
+        this.tonightRaf = requestAnimationFrame(tick);
+      };
+      this.tonightRaf = requestAnimationFrame(tick);
+    },
+
+    stopTonightPlay(): void {
+      this.tonightPlaying = false;
+      cancelAnimationFrame(this.tonightRaf);
+    },
+
+    // ── Listen (L18) ───────────────────────────────────────────────────────
+    async toggleListen(): Promise<void> {
+      this.listenOpen = !this.listenOpen;
+      stopProfile();
+      this.playhead = -1;
+      this.listenMessage = "";
+      if (!this.listenOpen) {
+        this.profile = null;
+        return;
+      }
+      this.soundOn = true;
+      const ok = await loadElevation();
+      if (!ok) { this.listenMessage = "The elevation data couldn't be loaded, so there's nothing to play."; }
+    },
+
+    async onListenLine(line: { a: { lat: number; lon: number }; b: { lat: number; lon: number } }): Promise<void> {
+      if (!(await loadElevation())) { return; }
+      this.profile = markRaw(elevationProfile(line.a, line.b));
+      this.playCurrentProfile();
+    },
+
+    listenAcrossView(): void {
+      type LatLon = { lat: number; lon: number };
+      const overlay = this.$refs.overlay as { centerLine(): { a: LatLon; b: LatLon } | null } | undefined;
+      const line = overlay?.centerLine();
+      if (line) {
+        this.onListenLine(line);
+      } else {
+        this.listenMessage = "Zoom out until the Moon fills the middle of the screen, then try again.";
+      }
+    },
+
+    async playCurrentProfile(): Promise<void> {
+      const p = this.profile;
+      if (!p || p.length < 2) { return; }
+      this.listenMessage = "";
+      const km = p[p.length - 1].km;
+      const duration = Math.min(8000, Math.max(2500, 2000 + km * 2.5));
+      await playProfile(p.map(s => s.elevation), duration, (t) => { this.playhead = t; });
+      this.playhead = -1;
+    },
+
+    // ── Dialogs & keyboard (L14, L15) ──────────────────────────────────────
+    openIntro(): void {
+      this.lastFocus = document.activeElement as HTMLElement | null;
+      this.showIntro = true;
+    },
+
+    closeIntro(): void {
+      this.showIntro = false;
+      this.lastFocus?.focus?.();
+      this.lastFocus = null;
+    },
+
+    dialogKeydown(ev: KeyboardEvent, flag: "showHelp" | "showLayerInfo"): void {
+      if (ev.key === "Escape") {
+        ev.stopPropagation();
+        this[flag] = false;
+        return;
+      }
+      trapTab(ev.currentTarget as HTMLElement, ev);
     },
 
     onKeyDown(e: KeyboardEvent): void {
-      if (e.code === "ArrowLeft")  this.moveLeft();
-      else if (e.code === "ArrowRight") this.moveRight();
+      if (e.key === "Escape") {
+        this.closeTopmost();
+        return;
+      }
+      // Never steal keys from sliders, selects and text fields (L14), and
+      // don't act behind a modal.
+      if (isEditableTarget(e.target) || e.altKey || e.ctrlKey || e.metaKey) { return; }
+      if (this.showIntro || this.showHelp || this.showLayerInfo || this.qr || this.isLoading) { return; }
+      if (e.key === "ArrowLeft") { this.moveLeft(); e.preventDefault(); }
+      else if (e.key === "ArrowRight") { this.moveRight(); e.preventDefault(); }
+      else if (e.key === "+" || e.key === "=") { this.zoomBy(1 / 1.5); }
+      else if (e.key === "-" || e.key === "_") { this.zoomBy(1.5); }
     },
-  },
 
-  mounted() {
-    this.waitForReady().then(() => this.initialize());
-    window.addEventListener("keydown", this.onKeyDown);
-  },
+    closeTopmost(): void {
+      if (this.qr) { this.qr = null; }
+      else if (this.overlaysOpen) { this.overlaysOpen = false; }
+      else if (this.showIntro) { this.closeIntro(); }
+      else if (this.showHelp) { this.showHelp = false; }
+      else if (this.showLayerInfo) { this.showLayerInfo = false; }
+      else if (this.explorePanel) { this.closeExplore(); }
+      else if (this.listenOpen) { this.toggleListen(); }
+      else if (this.tour) { this.exitTour(); }
+      else if (this.selectedSiteId) { this.selectedSiteId = null; }
+      else if (this.compareOpen) { this.toggleCompare(); }
+      else if (this.tonightOpen) { this.toggleTonight(); }
+    },
 
-  unmounted() {
-    window.removeEventListener("keydown", this.onKeyDown);
-    if (this.crossfadeTimer !== null) {
-      clearInterval(this.crossfadeTimer);
-    }
+    onResize(): void {
+      this.isNarrow = window.innerWidth <= 640;
+    },
+
+    // ── Deep links ─────────────────────────────────────────────────────────
+    stateParams(): URLSearchParams {
+      const params = new URLSearchParams();
+      if (this.currentLayer) { params.set("map", this.currentLayer.id); }
+      if (this.selectedSiteId) { params.set("site", this.selectedSiteId); }
+      if (this.showMaria) { params.set("maria", "1"); }
+      if (this.showCraters) { params.set("craters", "1"); }
+      return params;
+    },
+
+    syncUrl(): void {
+      if (this.isLoading || this.attractMode) { return; }
+      const params = new URLSearchParams(window.location.search);
+      params.delete("map");
+      params.delete("site");
+      params.delete("tour");
+      params.delete("maria");
+      params.delete("craters");
+      this.stateParams().forEach((v, k) => params.set(k, v));
+      const qs = params.toString();
+      window.history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : "") + window.location.hash);
+    },
+
+    // ── Kiosk (L10) ────────────────────────────────────────────────────────
+    setupKiosk(): void {
+      statsInit(true);
+      this.kioskCleanup.push(installKioskGuards({
+        onExternalLink: (url, title) => {
+          statsTrack("qr", url);
+          this.qr = { url, title };
+        },
+      }));
+      this.kioskCleanup.push(scheduleDailyReload(KIOSK_RELOAD_HOUR, () => this.attractMode));
+      const idle = createIdleWatcher({
+        idleMs: KIOSK_IDLE_MS,
+        onIdle: () => {
+          statsSessionEnd(idle.lastActivityTs());
+          this.startAttract();
+        },
+        onActive: () => {
+          if (this.attractMode) { this.stopAttract(); }
+          statsSessionStart();
+        },
+        onTap: () => statsTrack("tap"),
+      });
+      this.idle = idle;
+      idle.start();
+    },
+
+    resetForAttract(): void {
+      this.qr = null;
+      this.showIntro = false;
+      this.showHelp = false;
+      this.showLayerInfo = false;
+      this.explorePanel = null;
+      this.tour = null;
+      this.selectedSiteId = null;
+      this.showLabels = false;
+      this.showMaria = false;
+      this.showCraters = false;
+      this.overlaysOpen = false;
+      if (this.listenOpen) { this.toggleListen(); }
+      if (this.compareOpen) { this.toggleCompare(); }
+      if (this.tonightOpen) { this.toggleTonight(); }
+    },
+
+    startAttract(): void {
+      if (this.isLoading || this.attractMode) { return; }
+      this.resetForAttract();
+      this.attractMode = true;
+      this.attractIndex = 0;
+      this.attractStep();
+    },
+
+    async attractStep(): Promise<void> {
+      if (!this.attractMode) { return; }
+      const site = siteById(ATTRACT_SITES[this.attractIndex % ATTRACT_SITES.length]);
+      this.attractIndex += 1;
+      if (!site) { this.attractStep(); return; }
+      this.attractSiteId = site.id;
+      await flyTo({ lat: site.lat, lon: site.lon, zoomDeg: site.zoomDeg, onMidpoint: () => this.switchToLayerId(site.layer) });
+      if (!this.attractMode) { return; }
+      this.attractTimer = window.setTimeout(() => this.attractStep(), KIOSK_ATTRACT_DWELL_MS);
+    },
+
+    stopAttract(): void {
+      this.attractMode = false;
+      this.attractSiteId = null;
+      window.clearTimeout(this.attractTimer);
+      cancelFlight();
+      flyTo(wholeMoon());
+      this.showIntro = true;
+    },
+
+    openTakeHome(): void {
+      const base = this.publicUrl || (window.location.origin + window.location.pathname);
+      const qs = this.stateParams().toString();
+      statsTrack("takeHome");
+      this.qr = { url: base + (qs ? `?${qs}` : ""), title: "Take this view home" };
+    },
   },
 });
 </script>
 
 <style lang="less">
-
-html, body {
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  background-color: #000;
-  font-family: "Roboto Condensed", Verdana, Arial, Helvetica, sans-serif;
-  overflow: hidden;
-}
-
-#app {
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  background: transparent !important;
-
-  .v-application__wrap {
-    min-height: unset;
-  }
-}
-
 #main-content {
-  position: relative;
-  width: 100%;
-  height: 100%;
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
 
   .wwtelescope-component {
     position: absolute;
-    top: 0;
-    left: 0;
+    inset: 0;
     width: 100%;
     height: 100%;
     border: none;
@@ -683,540 +1169,647 @@ html, body {
   }
 }
 
-// ── Transitions ──────────────────────────────────────────────────────────────
-
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.3s ease;
-}
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-
-.slide-up-enter-active,
-.slide-up-leave-active {
-  transition: opacity 0.25s ease, transform 0.25s ease;
-}
-.slide-up-enter-from,
-.slide-up-leave-to {
-  opacity: 0;
-  transform: translateY(10px);
-}
-
-.slide-right-enter-active,
-.slide-right-leave-active {
-  transition: opacity 0.25s ease, transform 0.25s ease;
-}
-.slide-right-enter-from,
-.slide-right-leave-to {
-  opacity: 0;
-  transform: translateX(-12px);
-}
-
-// ── Loading modal ─────────────────────────────────────────────────────────────
+// ── Loading / boot error ───────────────────────────────────────────────────
 
 .modal {
   position: absolute;
   inset: 0;
   z-index: 100;
-  color: #fff;
-  background-color: #000;
   display: flex;
   align-items: center;
   justify-content: center;
-
-  .container {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-
-    .spinner {
-      background-image: url("assets/lunar_loader.gif");
-      background-repeat: no-repeat;
-      background-size: contain;
-      width: 3rem;
-      height: 3rem;
-    }
-
-    p {
-      margin: 0 0 0 1rem;
-      font-size: 150%;
-    }
-  }
+  background: var(--bg);
+  color: var(--text);
 }
 
-// ── Map selector bar ──────────────────────────────────────────────────────────
-
-#map-controls-container {
-  position: absolute;
-  top: 1.25rem;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 10;
+.loading-box {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
-  background: rgba(0, 0, 0, 0.35);
-  border-radius: 24px;
-  padding: 0.35rem 0.75rem;
-  backdrop-filter: blur(4px);
-}
+  gap: 1rem;
+  font-size: 1.4rem;
 
-.map-nav-btn {
-  background: none;
-  border: none;
-  color: #fff;
-  cursor: pointer;
-  font-size: 1rem;
-  padding: 4px 8px;
-  border-radius: 6px;
-  transition: color 0.15s, background 0.15s;
-  -webkit-tap-highlight-color: transparent;
+  p { margin: 0; }
 
-  &:hover:not(:disabled) {
-    color: #2aa5f7;
-    background: rgba(42, 165, 247, 0.12);
-  }
-
-  &:disabled {
-    opacity: 0.35;
-    cursor: default;
+  .spinner {
+    width: 3rem;
+    height: 3rem;
+    background: url("assets/lunar_loader.gif") no-repeat center / contain;
   }
 }
 
-.map-dots {
+.boot-error {
+  max-width: 28rem;
+  padding: 1.5rem;
+  text-align: center;
+
+  h2 { margin: 0 0 0.5rem; font-size: 1.4rem; }
+  p { margin: 0 0 1rem; color: var(--text-muted); line-height: 1.5; }
+  .boot-auto { font-size: 0.85rem; margin-top: 0.8rem; }
+}
+
+// ── Title chip ─────────────────────────────────────────────────────────────
+
+.title-chip {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 20;
   display: flex;
   align-items: center;
-  gap: 6px;
-}
-
-.map-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.35);
-  border: none;
+  gap: 0.55rem;
+  max-width: 15rem;
+  padding: 0.35rem 0.85rem 0.35rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  backdrop-filter: blur(8px);
+  color: var(--text);
   cursor: pointer;
-  transition: background 0.2s, transform 0.15s;
-  -webkit-tap-highlight-color: transparent;
-  padding: 0;
+  text-align: left;
 
-  &.active {
-    background: #2aa5f7;
-    transform: scale(1.2);
+  img { width: 32px; height: 32px; flex-shrink: 0; }
+
+  .title-text { display: flex; flex-direction: column; min-width: 0; }
+  .title-name {
+    font-size: 1.05rem;
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: 0.02em;
+  }
+  .title-map {
+    font-size: 0.75rem;
+    color: var(--accent);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
-  &:hover:not(.active) {
-    background: rgba(255, 255, 255, 0.65);
-  }
+  &:hover { border-color: rgba(242, 196, 109, 0.5); }
 }
 
-// ── Map name display ───────────────────────────────────────────────────────────
+// ── Layer tabs ─────────────────────────────────────────────────────────────
 
-#map-name-display {
+.layer-bar {
   position: absolute;
-  top: 3.8rem;
+  top: 0.75rem;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 10;
-  color: #fff;
-  font-size: 0.85rem;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.25rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  backdrop-filter: blur(8px);
+  max-width: calc(100vw - 33rem);
+
+  .layer-step { width: 36px; height: 36px; border-radius: 999px; }
+  .layer-current { display: none; }
+}
+
+.layer-tabs {
+  display: flex;
+  gap: 0.15rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  &::-webkit-scrollbar { display: none; }
+}
+
+.layer-tab {
+  flex-shrink: 0;
+  min-height: 36px;
+  padding: 0 0.85rem;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.92rem;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-shadow: 1px 1px 4px rgba(0,0,0,0.9);
   white-space: nowrap;
   cursor: pointer;
-  padding: 2px 8px;
-  border-radius: 12px;
-  transition: background 0.15s;
+  transition: background 0.15s, color 0.15s;
 
-  &:hover {
-    background: rgba(255,255,255,0.08);
+  &:hover { color: var(--text); background: rgba(255, 255, 255, 0.08); }
+  &[aria-pressed="true"] {
+    background: var(--accent);
+    color: var(--accent-ink);
   }
 }
 
-// ── Previous map button ────────────────────────────────────────────────────────
-
-#previous-btn {
+.layer-caption {
   position: absolute;
-  top: 1.25rem;
-  left: 1rem;
-  z-index: 10;
-  background: rgba(0,0,0,0.35);
-  border: none;
-  color: #fff;
-  cursor: pointer;
-  font-size: 1.1rem;
-  padding: 6px 10px;
-  border-radius: 8px;
-  backdrop-filter: blur(4px);
-  transition: color 0.15s, background 0.15s;
-  -webkit-tap-highlight-color: transparent;
-
-  &:hover {
-    color: #2aa5f7;
-    background: rgba(0,0,0,0.55);
-  }
-}
-
-// ── Right-side controls ────────────────────────────────────────────────────────
-
-#controls {
-  position: absolute;
-  top: 1.25rem;
-  right: 1rem;
-  z-index: 10;
-  list-style: none;
+  top: 4.1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 15;
+  width: max-content;
+  max-width: min(36rem, calc(100vw - 2rem));
   margin: 0;
-  padding: 0;
+  padding: 0.3rem 0.8rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.45);
+  color: var(--text);
+  font-size: 0.9rem;
+  text-align: center;
+  text-shadow: 0 1px 2px #000;
+}
+
+// ── Tools column ───────────────────────────────────────────────────────────
+
+.tools {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  z-index: 20;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  padding: 0.25rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  backdrop-filter: blur(8px);
 
-  li {
-    color: #fff;
-    cursor: pointer;
-    padding: 6px 8px;
-    border-radius: 8px;
-    font-size: 1.05rem;
-    transition: color 0.15s, background 0.15s;
-    -webkit-tap-highlight-color: transparent;
-
-    &:hover {
-      color: #2aa5f7;
-      background: rgba(0,0,0,0.35);
-    }
-
-    &.control-active {
-      color: #2aa5f7;
-    }
-
-    &.control-disabled {
-      opacity: 0.3;
-      cursor: default;
-      pointer-events: none;
-    }
+  .tools-sep {
+    height: 1px;
+    margin: 0.2rem 0.4rem;
+    background: var(--border);
   }
 }
 
-// ── Rocket button ──────────────────────────────────────────────────────────────
+// ── Overlays popover ───────────────────────────────────────────────────────
 
-#rocket-btn {
-  position: absolute;
-  bottom: 2.5rem;
-  left: 1.5rem;
-  z-index: 10;
-  background: rgba(0,0,0,0.45);
-  border: none;
-  color: #fff;
-  cursor: pointer;
-  font-size: 1.4rem;
-  padding: 10px 14px;
-  border-radius: 50%;
-  backdrop-filter: blur(4px);
-  transition: color 0.15s, background 0.15s, transform 0.15s;
-  -webkit-tap-highlight-color: transparent;
-
-  &:hover,
-  &.rocket-active {
-    color: #2aa5f7;
-    background: rgba(0,0,0,0.65);
-    transform: scale(1.08);
-  }
-}
-
-// ── Crossfade slider panel ─────────────────────────────────────────────────────
-
-#crossfade-panel {
-  position: absolute;
-  bottom: 3.5rem;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  background: rgba(0,0,0,0.55);
-  border-radius: 20px;
-  padding: 0.5rem 1rem;
-  backdrop-filter: blur(4px);
-  color: #fff;
-  font-size: 0.78rem;
-}
-
-.cf-label {
-  max-width: 7rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  text-align: center;
-  flex-shrink: 0;
-  opacity: 0.85;
-}
-
-.opacity-range {
-  width: 40vw;
-  max-width: 280px;
-  cursor: pointer;
-  accent-color: #2aa5f7;
-}
-
-// ── Areas of interest panel ────────────────────────────────────────────────────
-
-#locations-panel {
-  position: absolute;
-  bottom: 5.5rem;
-  left: 1rem;
-  z-index: 10;
-  width: min(280px, 80vw);
-  background: rgba(0,0,0,0.72);
-  border-radius: 14px;
-  padding: 0.75rem;
-  color: #fff;
-  backdrop-filter: blur(6px);
-  box-shadow: 0 0 10px rgba(0,0,0,0.5);
-
-  .panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 0.5rem;
-
-    h3 {
-      margin: 0;
-      font-size: 0.95rem;
-      font-weight: 700;
-      letter-spacing: 0.03em;
-    }
-  }
-}
-
-.locations-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.location-item {
-  cursor: pointer;
-  padding: 0.45rem 0.5rem;
-  border-radius: 8px;
-  font-size: 0.88rem;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  transition: background 0.15s, color 0.15s;
-  -webkit-tap-highlight-color: transparent;
-
-  &:hover {
-    background: rgba(42, 165, 247, 0.18);
-    color: #8dd4fc;
-  }
-
-  &.location-active {
-    color: #2aa5f7;
-  }
-}
-
-.location-icon {
-  font-size: 0.75rem;
-  opacity: 0.7;
-}
-
-// ── Location description popup ─────────────────────────────────────────────────
-
-#location-description {
-  position: absolute;
-  bottom: 2rem;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 10;
-  width: min(500px, 90vw);
-  max-height: 35vh;
-  overflow-y: auto;
-  background: rgba(0,0,0,0.72);
-  border-radius: 16px;
-  padding: 1rem 1.2rem;
-  color: #fff;
-  font-size: 0.9rem;
-  line-height: 1.5;
-  cursor: pointer;
-  backdrop-filter: blur(6px);
-  box-shadow: 0 0 16px rgba(42,165,247,0.25);
-
-  strong {
-    display: block;
-    font-size: 1.05rem;
-    margin-bottom: 0.35rem;
-  }
-
-  p {
-    margin: 0 0 0.5rem 0;
-  }
-
-  &::-webkit-scrollbar {
-    width: 6px;
-  }
-  &::-webkit-scrollbar-track {
-    background: rgba(255,255,255,0.05);
-  }
-  &::-webkit-scrollbar-thumb {
-    background: #2aa5f7;
-    border-radius: 6px;
-  }
-}
-
-// ── Layer info overlay ─────────────────────────────────────────────────────────
-
-#layer-info-backdrop {
-  position: absolute;
-  inset: 0;
-  z-index: 20;
-  background: rgba(0,0,0,0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  backdrop-filter: blur(2px);
-}
-
-.layer-info-panel {
+.overlays-anchor {
   position: relative;
-  background: rgba(10,15,30,0.95);
-  border-radius: 18px;
-  padding: 1.5rem 1.75rem 1.25rem;
-  color: #fff;
-  max-width: min(520px, 90vw);
-  max-height: 80vh;
-  overflow-y: auto;
-  box-shadow: 0 0 32px rgba(42,165,247,0.2), 0 4px 24px rgba(0,0,0,0.7);
 
-  h3 {
-    margin: 0 0 0.75rem 0;
-    font-size: 1.15rem;
+  .has-active { color: var(--accent); }
+  .badge {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 3px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-size: 0.65rem;
     font-weight: 700;
-  }
-
-  p {
-    font-size: 0.92rem;
-    line-height: 1.6;
-    margin: 0 0 0.75rem 0;
-    opacity: 0.9;
-  }
-}
-
-.info-close {
-  position: absolute;
-  top: 0.85rem;
-  right: 0.85rem;
-}
-
-.legend-img {
-  display: block;
-  max-width: 100%;
-  border-radius: 8px;
-  margin-bottom: 0.75rem;
-}
-
-// ── Help overlay ───────────────────────────────────────────────────────────────
-
-#help-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 20;
-  background: rgba(0,0,0,0.65);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  backdrop-filter: blur(3px);
-}
-
-.help-box {
-  background: rgba(10,15,30,0.95);
-  border-radius: 18px;
-  padding: 1.5rem 2rem;
-  color: #fff;
-  max-width: min(480px, 90vw);
-  box-shadow: 0 0 32px rgba(42,165,247,0.2), 0 4px 24px rgba(0,0,0,0.7);
-  cursor: default;
-
-  h2 {
-    margin: 0 0 1rem 0;
-    font-size: 1.25rem;
-    font-weight: 700;
+    line-height: 15px;
     text-align: center;
   }
 }
 
-.help-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
-  font-size: 0.9rem;
-  line-height: 1.4;
-}
-
-.help-icons {
-  display: flex;
-  gap: 4px;
-  color: #2aa5f7;
-  min-width: 2rem;
-  justify-content: center;
-  flex-shrink: 0;
-  padding-top: 1px;
-}
-
-// ── Shared utilities ───────────────────────────────────────────────────────────
-
-.panel-close-btn {
-  background: none;
-  border: none;
-  color: rgba(255,255,255,0.6);
-  cursor: pointer;
-  font-size: 1rem;
-  padding: 2px 6px;
-  border-radius: 6px;
-  transition: color 0.15s, background 0.15s;
-  -webkit-tap-highlight-color: transparent;
-  flex-shrink: 0;
-
-  &:hover {
-    color: #fff;
-    background: rgba(255,255,255,0.08);
-  }
-}
-
-.dismiss-hint {
-  display: block;
-  font-size: 0.72rem;
-  opacity: 0.5;
-  margin-top: 0.25rem;
-  text-align: center;
-}
-
-// ── Credits ────────────────────────────────────────────────────────────────────
-
-#credits {
+.overlays-menu {
   position: absolute;
-  bottom: 0.5rem;
-  right: 0.75rem;
-  z-index: 10;
-  color: rgba(255,255,255,0.7);
-  font-size: 0.72rem;
+  top: 0;
+  right: calc(100% + 0.6rem);
+  width: 17.5rem;
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.overlay-switch {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 0.7rem;
+  width: 100%;
+  padding: 0.5rem 0.55rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 
-  a {
+  &:hover { background: rgba(255, 255, 255, 0.06); }
+
+  .sw {
+    position: relative;
+    flex-shrink: 0;
+    width: 34px;
+    height: 20px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.18);
+    transition: background 0.15s;
+    &::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--text);
+      transition: transform 0.15s;
+    }
+  }
+  &[aria-checked="true"] .sw {
+    background: var(--accent);
+    &::after { transform: translateX(14px); background: var(--accent-ink); }
+  }
+
+  .sw-text {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    b { font-size: 0.95rem; }
+    small { font-size: 0.76rem; color: var(--text-muted); line-height: 1.3; }
+  }
+
+  .sw-key {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+  }
+  .key-maria { background: rgba(118, 146, 255, 0.35); border: 1.5px solid rgba(160, 182, 255, 0.95); }
+  .key-craters { border-radius: 50%; border: 1.5px solid rgba(255, 214, 102, 0.9); }
+  .key-grid {
+    border: 1px solid rgba(242, 196, 109, 0.6);
+    background:
+      linear-gradient(rgba(242, 196, 109, 0.6), rgba(242, 196, 109, 0.6)) center / 1px 100% no-repeat,
+      linear-gradient(rgba(242, 196, 109, 0.6), rgba(242, 196, 109, 0.6)) center / 100% 1px no-repeat;
+  }
+}
+
+.overlay-credit {
+  margin: 0.3rem 0.55rem 0.2rem;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+// ── Launchers ──────────────────────────────────────────────────────────────
+
+.launchers {
+  position: absolute;
+  left: 0.75rem;
+  bottom: 2rem;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+
+  .launcher {
+    background: var(--surface);
+    border-color: var(--border);
+    color: var(--text);
+    backdrop-filter: blur(8px);
+
+    &:hover { border-color: rgba(242, 196, 109, 0.6); }
+    &[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+  }
+
+  .launcher-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+  }
+}
+
+// ── Dock ───────────────────────────────────────────────────────────────────
+
+.dock {
+  position: absolute;
+  left: 50%;
+  bottom: 2rem;
+  transform: translateX(-50%);
+  z-index: 22;
+  width: min(34rem, calc(100vw - 1.5rem));
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0.5rem;
+  pointer-events: none;
+
+  > * { pointer-events: auto; }
+
+  .tour-panel {
+    position: static;
+    transform: none;
+    width: auto;
+  }
+}
+
+.dock-panel {
+  padding: 0.5rem 0.6rem 0.5rem 0.9rem;
+}
+
+.compare-panel {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+
+  select {
+    min-height: 36px;
+    padding: 0 0.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #1a1b21;
+    color: var(--text);
+    font: inherit;
+    font-weight: 600;
+  }
+
+  .cmp-range { flex: 1; accent-color: var(--accent); min-width: 6rem; }
+  .cmp-label { font-weight: 700; white-space: nowrap; }
+}
+
+.tonight-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem 1rem;
+
+  .tonight-phase {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+  }
+  .phase-icon { width: 40px; height: 40px; }
+  .tonight-name { margin: 0; font-weight: 700; font-size: 1.05rem; }
+  .tonight-meta { margin: 0; font-size: 0.82rem; color: var(--text-muted); }
+  .tonight-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    flex: 1;
+    min-width: 14rem;
+  }
+  .tonight-range { flex: 1; accent-color: var(--accent); }
+}
+
+.listen-panel {
+  .listen-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+  .listen-hint {
+    flex: 1;
+    margin: 0.35rem 0;
+    font-size: 0.92rem;
+    line-height: 1.45;
+  }
+  .listen-chart {
+    flex: 1;
+    svg { width: 100%; height: 56px; display: block; }
+    .chart-area { fill: rgba(124, 198, 240, 0.18); }
+    .chart-line { fill: none; stroke: var(--robotic-color); stroke-width: 2; vector-effect: non-scaling-stroke; }
+    .chart-head { stroke: #fff; stroke-width: 2; vector-effect: non-scaling-stroke; }
+  }
+  .listen-stats {
+    margin: 0.25rem 0 0;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+  }
+  .listen-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.4rem;
+  }
+  .listen-msg {
+    margin: 0.4rem 0 0;
+    font-size: 0.85rem;
+    color: var(--accent);
+  }
+}
+
+// ── Legends ────────────────────────────────────────────────────────────────
+
+.legends {
+  position: absolute;
+  right: 0.75rem;
+  bottom: 9.25rem;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  pointer-events: none;
+}
+
+.legend {
+  margin: 0;
+  padding: 0.35rem 0.45rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+
+  figcaption {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 0.2rem;
+  }
+  img { display: block; width: 13.5rem; max-width: 40vw; border-radius: 4px; }
+}
+
+// ── Dialogs ────────────────────────────────────────────────────────────────
+
+.overlay-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(2px);
+}
+
+.dialog {
+  position: relative;
+  width: min(34rem, 100%);
+  max-height: calc(100% - 2rem);
+  overflow-y: auto;
+  padding: 1.4rem 1.6rem;
+  outline: none;
+  &:focus-visible { outline: none; }
+
+  h2 { margin: 0 2.5rem 0.6rem 0; font-size: 1.35rem; }
+  p { line-height: 1.55; }
+
+  .dialog-close {
+    position: absolute;
+    top: 0.75rem;
+    right: 0.75rem;
+  }
+
+  .info-caption { color: var(--accent); font-weight: 600; }
+  .info-legend { display: block; max-width: 100%; border-radius: 8px; margin: 0.5rem 0; }
+  .info-credit { font-size: 0.82rem; color: var(--text-muted); margin-bottom: 0; }
+}
+
+.help-list {
+  margin: 0 0 1rem;
+
+  > div {
+    display: flex;
+    gap: 0.9rem;
+    align-items: baseline;
+    padding: 0.35rem 0;
+  }
+  dt {
+    flex-shrink: 0;
+    width: 2.6rem;
+    text-align: center;
+    color: var(--accent);
+    font-weight: 700;
+  }
+  dd { margin: 0; line-height: 1.45; }
+}
+
+.help-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+
+  .key {
     display: inline-flex;
     align-items: center;
+    gap: 0.4rem;
+    &::before {
+      content: "";
+      width: 10px;
+      height: 10px;
+      border: 2px solid currentColor;
+    }
   }
+  .key-apollo::before { border-color: var(--apollo-color); border-radius: 50%; }
+  .key-robotic::before { border-color: var(--robotic-color); transform: rotate(45deg); width: 8px; height: 8px; }
+  .key-artemis::before {
+    border: none;
+    background: var(--artemis-color);
+    clip-path: polygon(50% 0, 100% 100%, 0 100%);
+    width: 12px;
+    height: 11px;
+  }
+  .key-feature::before { border-color: var(--feature-color); border-radius: 50%; width: 7px; height: 7px; }
+}
 
-  img {
-    height: 18px;
-    vertical-align: middle;
+// ── Attract & credits ──────────────────────────────────────────────────────
+
+.attract-caption {
+  position: absolute;
+  left: 50%;
+  bottom: 3rem;
+  transform: translateX(-50%);
+  z-index: 30;
+  text-align: center;
+  text-shadow: 0 2px 8px #000;
+  pointer-events: none;
+
+  .attract-name { margin: 0; font-size: 2.4rem; font-weight: 700; }
+  .attract-summary { margin: 0.2rem 0 1rem; font-size: 1.2rem; }
+  .attract-cta {
+    display: inline-block;
+    margin: 0;
+    padding: 0.5rem 1.2rem;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-weight: 700;
+    font-size: 1.1rem;
+    animation: attract-pulse 2.5s ease-in-out infinite;
   }
+}
+
+@keyframes attract-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+#main-content.attract {
+  .title-chip, .layer-bar, .layer-caption, .tools, .launchers, .dock, .legends { opacity: 0; pointer-events: none; }
+}
+
+.credits {
+  position: absolute;
+  right: 0.75rem;
+  bottom: 0.4rem;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+
+  img { height: 18px; display: block; }
+}
+
+// Kiosk: larger targets, no external-navigation affordances.
+#main-content.kiosk-ui {
+  .icon-btn { width: 48px; height: 48px; font-size: 1.2rem; }
+  .layer-tab { min-height: 44px; font-size: 1.05rem; }
+  .launchers .btn { min-height: 52px; font-size: 1.1rem; padding: 0 1.4rem; }
+}
+
+// ── Narrow screens ─────────────────────────────────────────────────────────
+
+@media (max-width: 1100px) {
+  .layer-bar {
+    max-width: calc(100vw - 20rem);
+  }
+}
+
+@media (max-width: 860px) {
+  .title-chip {
+    padding: 0.3rem;
+    .title-text { display: none; }
+  }
+  .layer-bar {
+    left: 3.9rem;
+    right: 4.1rem;
+    transform: none;
+    max-width: none;
+    justify-content: space-between;
+
+    .layer-tabs { display: none; }
+    .layer-current {
+      display: block;
+      flex: 1;
+      text-align: center;
+      font-weight: 700;
+      color: var(--accent);
+    }
+  }
+  .layer-caption {
+    top: 3.9rem;
+    font-size: 0.8rem;
+    border-radius: 10px;
+  }
+}
+
+@media (max-width: 640px) {
+  .tools {
+    top: auto;
+    bottom: 4.6rem;
+    flex-direction: column;
+    .icon-btn { width: 38px; height: 38px; font-size: 0.95rem; }
+  }
+  .launchers { bottom: 1.6rem; }
+  .dock {
+    bottom: 4.6rem;
+    left: 0.75rem;
+    right: 3.9rem;
+    width: auto;
+    transform: none;
+  }
+  .legends { bottom: auto; top: 6.6rem; right: 0.75rem; }
+  .legend img { width: 9rem; }
 }
 </style>

@@ -1,30 +1,14 @@
-const { VuetifyPlugin } = require('webpack-plugin-vuetify');
-const { defineConfig } = require("@vue/cli-service")
+const { defineConfig } = require("@vue/cli-service");
 
 module.exports = defineConfig({
   publicPath: "./",
-  
-  configureWebpack: {
-    plugins: [
-      new VuetifyPlugin()
-    ],
-    module: {
-      rules: [
-        {
-          test: /\.csv/,
-          type: "asset/source"
-        }
-      ]
-    }
-  },
 
-  // Needed for BrowserStack/Safari testing as of 2023 March. This makes the
-  // dev server insecure, but that's OK since we only use it in controlled
-  // circumstances. https://stackoverflow.com/questions/43619644
+  // Don't ship source maps to visitors (audit E4).
+  productionSourceMap: false,
+
   devServer: {
-    allowedHosts: 'all',
     client: {
-      overlay: false
-    }
-  }
+      overlay: false,
+    },
+  },
 });

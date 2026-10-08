@@ -1,486 +1,205 @@
-@font-face {
-  font-family: "Highway Gothic Narrow";
-  src: url("./HighwayGothicNarrow.ttf");
-}
-
-.no-select {
-  -webkit-user-select: none; /* Safari */
-  -moz-user-select: none; /* Old versions of Firefox */
-  -ms-user-select: none; /* Internet Explorer/Edge */
-  user-select: none; /* Non-prefixed version, currently supported by Chrome, Edge, Opera and Firefox */
-}
-.pointer-events {
-  pointer-events: auto;
-}
+// Moon Maps global styles and design tokens (audit L13).
+// Regolith greys with a sunlit-gold accent. Program colors are a
+// color-blind-safe set (gold / sky blue / orchid / bone), and the site
+// markers also differ in shape, so color is never the only cue.
 
 :root {
-  --default-font-size: clamp(0.7rem, min(1.7vh, 1.7vw), 1.1rem);
-  --default-line-height: clamp(1rem, min(2.2vh, 2.2vw), 1.6rem);
+  --bg: #0b0c10;
+  --surface: rgba(16, 17, 22, 0.8);
+  --surface-strong: rgba(18, 19, 25, 0.95);
+  --border: rgba(214, 208, 196, 0.18);
+  --text: #f1eee8;
+  --text-muted: #bdb7ab;
+  --regolith: #8d877c;
+  --accent: #f2c46d;
+  --accent-strong: #ffd98f;
+  --accent-ink: #1b1406;
+  --focus: #ffe2a8;
+
+  --apollo-color: #f2c46d;
+  --robotic-color: #7cc6f0;
+  --artemis-color: #e58fd6;
+  --feature-color: #e8e4da;
+
+  // Names the shared kiosk components (KioskQrModal) expect.
+  --accent-color: var(--accent);
+  --accent-color2: var(--accent-strong);
+
+  --radius-sm: 10px;
+  --radius: 14px;
+  --radius-lg: 20px;
+
+  --font: "Roboto Condensed Variable", "Roboto Condensed", "Arial Narrow", system-ui, sans-serif;
 }
 
-/* Overall page styling */
-html {
+html,
+body {
+  width: 100%;
   height: 100%;
   margin: 0;
   padding: 0;
-  background-color: #000;
-
   overflow: hidden;
-  -ms-overflow-style: none;
-
-  /* We don't want a scrollbar for the overall canvas */
-  scrollbar-width: none;
-  ::-webkit-scrollbar {
-    display: none;
-  }
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
 }
 
 body {
   position: fixed;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-
-  font-family: Verdana, Arial, Helvetica, sans-serif;
-}
-
-a {
-  text-decoration: none;
-  color: #aec2fd;
-  pointer-events: auto;
-
-  &:hover {
-    text-decoration: underline;
-  }
-
-  &[class^="share-network"]:hover {
-    text-decoration: none;
-    filter: brightness(75%);
-  }
-}
-
-/*
-  The main content of the mini.
-  The --app-content-height allows the app to shrink when the text is open
- */
-#main-content {
-  position: fixed;
-  width: 100%;
-  height: var(--app-content-height);
-  overflow: hidden;
-
-  transition: height 0.1s ease-in-out;
+  inset: 0;
 }
 
 #app {
   width: 100%;
   height: 100%;
-  margin: 0;
-  overflow: hidden;
-  font-size: 11pt;
+}
 
-  .wwtelescope-component {
-    position: absolute;
-    top: 0;
-    width: 100%;
-    height: 100%;
-    border-style: none;
-    border-width: 0;
-    margin: 0;
-    padding: 0;
-    transition: height .25s ease;
-    canvas {
-      background-color: black;
-    }
+a {
+  color: var(--accent-strong);
+}
+
+button {
+  font-family: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+// ── Shared surfaces and controls ────────────────────────────────────────────
+
+.panel {
+  padding: 0.9rem 1rem;
+  border-radius: var(--radius);
+  background: var(--surface-strong);
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(10px);
+  color: var(--text);
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font-size: 1.05rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+
+  &:hover { background: rgba(255, 255, 255, 0.1); }
+  &[aria-pressed="true"] {
+    color: var(--accent-ink);
+    background: var(--accent);
+  }
+  &:disabled {
+    opacity: 0.4;
+    cursor: default;
   }
 }
 
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 44px;
+  padding: 0 1.15rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+
+  &:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  &:hover:not(:disabled) { background: var(--accent-strong); }
+}
+
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(242, 196, 109, 0.55);
+  color: var(--text);
+  &:hover:not(:disabled) { background: rgba(242, 196, 109, 0.14); }
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-muted);
+  &:hover:not(:disabled) { color: var(--text); }
+}
+
+.btn-small {
+  min-height: 36px;
+  padding: 0 0.9rem;
+  font-size: 0.88rem;
+}
+
+// ── Transitions ─────────────────────────────────────────────────────────────
+
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.3s;
+  transition: opacity 0.3s ease;
 }
-.fade-enter,
+.fade-enter-from,
 .fade-leave-to {
   opacity: 0;
 }
 
-
-/* The modal loading window */
-.modal {
-  position: absolute;
-  top: 0px;
-  left: 0px;
-  width: 100%;
-  height: 100%;
-  z-index: 100;
-  color: #fff;
-  background-color: rgba(0, 0, 0, 0.7);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.rise-enter-active,
+.rise-leave-active {
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.rise-enter-from,
+.rise-leave-to {
+  opacity: 0;
+  transform: translateY(10px);
 }
 
-#modal-loading {
-  background-color: #000;
-  .container {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    justify-content: center;
-    .spinner {
-      background-image: url("./lunar_loader.gif");
-      background-repeat: no-repeat;
-      background-size: contain;
-      width: 3rem;
-      height: 3rem;
-    }
-    p {
-      margin: 0 0 0 1rem;
-      padding: 0;
-      font-size: 150%;
-    }
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
   }
 }
 
-#modal-readytostart {
-  cursor: pointer;
-  color: #999;
-
-  &:hover {
-    color: #2aa5f7;
-  }
-
-  div {
-    margin: 0;
-    padding: 0;
-    background-image: url("./wwt_globe_bg.png");
-    background-repeat: no-repeat;
-    background-size: contain;
-    background-position: center;
-    width: 20rem;
-    height: 20rem;
-    max-width: 70%;
-    max-height: 70%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-
-    .icon {
-      width: 60%;
-      height: 60%;
-      margin-left: 14%;
-      margin-top: 3%;
-    }
-  }
-}
-
-
-
-/* Splash screen */
-#splash-overlay {
-  position: fixed;
-  align-items: center;
-  justify-content: center;
-  font-size: min(8vw, 7vh);
-}
-
-#splash-screen {
-
-  @media (max-width: 699px) {
-    max-height: 80vh;
-    max-width: 90vw;
-    border-radius: 25px;
-  }
-
-  @media (min-width: 700px) {
-    max-height: 85vh;
-    max-width: min(70vw, 800px);
-    border-radius: 50px;
-  }
-
-  background-color: black;
-  backdrop-filter: blur(5px);
-  justify-content: space-around;
-  align-content: center;
-  padding-top: 3rem;
-  padding-bottom: 1rem;
-  padding-inline: 1rem;
-
-  border: min(1.2vw, 0.9vh) solid var(--accent-color);
-  overflow: auto;
-  font-family: 'Highway Gothic Narrow', 'Roboto', sans-serif;
-
-  box-shadow: 0px 0px 25px black;
-
-  div {
-    margin-inline: auto;
-    text-align: center;
-  }
-  // make a paragraph inside the div centered horizontally and vertically
-  p {
-    font-family: 'Highway Gothic Narrow', 'Roboto', sans-serif;
-    vertical-align: middle;
-  }
-    
-  p.highlight {  
-    // make uppercase
-    text-transform: uppercase;
-    font-weight: bolder;
-  }
-  
-  p.small {
-    font-size: var(--default-font-size);
-    font-weight: bold;
-  }
-
-  #first-splash-row {
-    width: 100%;
-  }
-
-  #close-splash-button {
-    position: absolute;
-
-    @media (max-width: 699px) {
-      top: 0.5rem;
-      right: 1rem;
-    }
-  
-    @media (min-width: 700px) {
-      top: 0rem;
-      right: 1.75rem;
-    }
-
-    text-align: end;
-    color: var(--accent-color2);
-    font-size: min(8vw, 5vh);
-
-    &:hover {
-      cursor: pointer;
-    }
-  }
-
-  #splash-screen-text {
-    // in the grid, the text is in the 2nd column
-    display: flex;
-    flex-direction: column;
-    line-height: 130%;
-    
-  }
-
-  #splash-screen-guide {
-    margin-block: 1.5em;
-    font-size: min(5vw, 4vh);
-    line-height: 140%;
-    width: 75%;
-
-    .v-col{
-      padding: 0;
-    }
-    
-    .svg-inline--fa {
-      color:var(--accent-color);
-      margin: 0 10px;
-    }
-  }
-
-  #splash-screen-acknowledgements {
-    padding-top: 1rem;
-    font-size: calc(1.7 * var(--default-font-size));
-    line-height: calc(1.5 * var(--default-line-height));
-    width: 70%; 
-  }
-
-  #splash-screen-logos {
-    margin-block: 0.75em;
-
-    img {
-    height: 5vmin;
-    vertical-align: middle;
-    margin: 2px;
-    }
-
-    @media only screen and (max-width: 600px) {
-      img {
-        height: 24px;
-      }
-    }
-
-    svg {
-      vertical-align: middle;
-      height: 24px;
-    }
-  }
-}
-
-#body-logos {
-  margin-left: auto;
-  margin-right: 0;
-
-  img {
-    height: 35px;
-    vertical-align: middle;
-    margin: 2px;
-  }
-}
-
-
-/* Video and text dialogs */
-.video-wrapper {
-  height: 100%;
-  background: black;
-  text-align: center;
-  z-index: 1000;
-}
-
-video {
-  height: 100%;
-  width: auto;
-  max-width: 100%;
-  object-fit: contain;
-}
-
-#video-container {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  max-width: 100%;
-  overflow: hidden;
-  padding: 0px;
-  z-index: 1000;
-}
-
-.bottom-sheet {
-  .v-overlay__content {
-    align-self: flex-end;
-    padding: 0;
-    margin: 0;
-    max-width: 100%;
-    height: 34%;
-  }
-}
-  
-#tabs {
-  align-self: left;
-
-  &.v-tabs [aria-selected="false"]:not(.v-slide-group-item--active) {
-    color: #DDD !important;
-  }
-  
-  /* This prevents the tabs from having some extra space to the left when the screen is small
-  (around 400px or less) */
-  &.v-tabs:not(.v-tabs--vertical).v-tabs--right>.v-slide-group--is-overflowing.v-tabs-bar--is-mobile:not(.v-slide-group--has-affixes) .v-slide-group__next, .v-tabs:not(.v-tabs--vertical):not(.v-tabs--right)>.v-slide-group--is-overflowing.v-tabs-bar--is-mobile:not(.v-slide-group--has-affixes) .v-slide-group__prev {
-    display: none;
-  }
-}
-
-.info-tabs {
-  @media (max-width: 599px) {
-    padding-inline: 0.75rem;
-    font-size: calc(1.1 * var(--default-font-size));
-  }
-  @media (min-width: 600px) {
-    padding-inline: 4rem;
-  }
-}
-
-.info-text {
-  font-size: var(--default-font-size);
-  line-height: var(--default-line-height);
-  
-  height: 33vh;
-  padding-bottom: 25px;
-
-  & img {
-    max-width: 100%;
-  }
-
-  & h3 {
-    margin-top: calc(var(--default-line-height));
-    margin-bottom: calc(0.3 * var(--default-line-height));
-    color: var(--accent-color2);
-  }
-
-  & p {
-    margin-bottom: calc(0.5 * var(--default-line-height));
-  }
-
-  & a {
-    text-decoration: underline;
-  }
-
-
-}
-
-
-/* Miscellaneous class styling */
-.close-icon {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 15;
-
-  &:hover {
-    cursor: pointer;
-  }
-
-  &:focus {
-    color: white;
-    border: 2px solid white;
-  }
-}
-
-.pointer {
-  cursor: pointer;
-}
-
-.control-icon {
-  pointer-events: auto;
-
-  &:hover {
-    cursor: pointer;
-  }
-
-}
-
-.scrollable {
-  overflow-y: auto;
-}
-
-.no-bottom-border-radius {
-  border-bottom-left-radius: 0px !important;
-  border-bottom-right-radius: 0px !important;
-}
-
-
-/*
-  These last few blocks contain some hackery related to the text tabs.
-  The close icon isn't part of the standard v-tabs setup, so we need to
-  create some space for that ourselves.
- */
-#tab-items {
-  /* padding-bottom: 2px !important; */
-
-  .v-card-text {
-    font-size: ~"max(14px, calc(0.7em + 0.3vw))";
-    padding-top: ~"max(2vw, 16px)";
-    padding-left: ~"max(4vw, 16px)";
-    padding-right: ~"max(4vw, 16px)";
-
-    .end-spacer {
-      height: 25px;
-    }
-  }
-
-}
-
-
-#close-text-icon {
-  position: absolute;
-  top: 0.25em;
-  right: calc((3em - 0.6875em) / 3); /* font-awesome-icons have width 0.6875em */
-  color: white;
+// Kiosk lockdown hooks (body.kiosk-mode is set by installKioskGuards).
+body.kiosk-mode {
+  overscroll-behavior: none;
+  -webkit-touch-callout: none;
+  user-select: none;
 }
